@@ -1,0 +1,189 @@
+import os
+import shutil
+import re
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
+
+# 🛠️ Define values before running
+FOLDER_PATH = r"C:\Users\kp.osgf\Desktop\Code Test"  # Copy the pathway for the folder that contains the drone images and videos
+PROJECT_ID = "ProjectA" # Name your project, keep the name the same for each flight if for the same project, date
+LOCATION = "ForestSite1" # Where is this project happening? Field 3, RKB Woods, Main House, etc
+
+# Define mappings for multispectral bands (TIF) and image categories for JPG
+band_mapping = {
+    "MS_G": "Green",
+    "MS_R": "Red",
+    "MS_RE": "RedEdge",
+    "MS_NIR": "NIR",
+}
+
+image_type_mapping = {
+    "D": "TrueColor",
+    "F": "NDVI"
+}
+
+def check_folder_accessibility(folder_path):
+    """Checks if the given folder path is accessible, readable, and writable."""
+    if not os.path.exists(folder_path):
+        print("❌ Error: Folder path does not exist.")
+        return False
+    if not os.path.isdir(folder_path):
+        print("❌ Error: Provided path is not a directory.")
+        return False
+    if not os.access(folder_path, os.R_OK):
+        print("❌ Error: Folder is not readable.")
+        return False
+    if not os.access(folder_path, os.W_OK):
+        print("❌ Error: Folder is not writable.")
+        return False
+    print(f"✅ Folder '{folder_path}' is accessible, readable, and writable.")
+    return True
+
+def get_exif_data(image_path):
+    """Extracts EXIF metadata from a JPG image file."""
+    exif_data = {}
+    try:
+        with Image.open(image_path) as img:
+            exif_info = img._getexif()
+            if exif_info:
+                for tag, value in exif_info.items():
+                    tag_name = TAGS.get(tag, tag)
+                    exif_data[tag_name] = value
+                # Extract GPS data if available
+                if "GPSInfo" in exif_data:
+                    gps_data = {}
+                    for gps_tag in exif_data["GPSInfo"]:
+                        sub_tag = GPSTAGS.get(gps_tag, gps_tag)
+                        gps_data[sub_tag] = exif_data["GPSInfo"][gps_tag]
+                    exif_data["GPSInfo"] = gps_data
+    except Exception as e:
+        print(f"❌ Error reading EXIF data from {image_path}: {e}")
+        return {"Error": f"Could not extract EXIF: {str(e)}"}
+    return exif_data
+
+def rename_sort_extract_exif(folder_path, project_id, location, 
+                               processing_log="processing_log.txt", 
+                               metadata_log="metadata_log.txt"):
+    """
+    Renames and sorts drone files into categorized folders and extracts EXIF metadata 
+    for TrueColor and NDVI JPG images.
+    Also processes MP4 videos, placing them into a new "Video" folder.
+    """
+    if not check_folder_accessibility(folder_path):
+        return
+
+    print("\n🚀 Starting file processing...")
+
+    processing_log_path = os.path.join(folder_path, processing_log)
+    metadata_log_path = os.path.join(folder_path, metadata_log)
+    renamed_count = 0  
+    errors = []  
+
+    # Create necessary subfolders (added "Video")
+    category_folders = {
+        "TrueColor": os.path.join(folder_path, "TrueColor"),
+        "NDVI": os.path.join(folder_path, "NDVI"),
+        "Green": os.path.join(folder_path, "Green"),
+        "Red": os.path.join(folder_path, "Red"),
+        "RedEdge": os.path.join(folder_path, "RedEdge"),
+        "NIR": os.path.join(folder_path, "NIR"),
+        "Video": os.path.join(folder_path, "Video")
+    }
+
+    for folder in category_folders.values():
+        os.makedirs(folder, exist_ok=True)
+
+    # Count files before processing
+    category_counts = {key: 0 for key in category_folders.keys()}
+    total_files = 0
+
+    print("\n🔍 Debug: Listing all files before processing...")
+    for file in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, file)
+        if os.path.isfile(file_path):
+            total_files += 1
+            print(f"  📂 Checking file: {file}")
+            file_ext = os.path.splitext(file)[1].lower()
+            # Use regex to capture date, image number, and identifier (for all files)
+            match = re.match(r"DJI_(\d{8})\d{6}_(\d{4})_(MS_[A-Z]+|[DF])", file)
+            if match:
+                if file_ext == ".mp4":
+                    category_counts["Video"] += 1
+                elif file_ext == ".tif":
+                    identifier = match.group(3)
+                    if identifier in band_mapping:
+                        category_counts[band_mapping[identifier]] += 1
+                elif file_ext == ".jpg":
+                    identifier = match.group(3)
+                    if identifier in image_type_mapping:
+                        category_counts[image_type_mapping[identifier]] += 1
+            else:
+                print(f"  ⚠️ Skipping file (no match): {file}")
+
+    print(f"\n📂 Found {total_files} files to process:")
+    for category, count in category_counts.items():
+        print(f"  - {category}: {count}")
+
+    with open(processing_log_path, "w") as proc_log, open(metadata_log_path, "w") as meta_log:
+        proc_log.write("Mavic 3M Processing Log\n" + "="*60 + "\n")
+        meta_log.write("Mavic 3M Metadata Log\n" + "="*60 + "\n")
+
+        processed_counts = {key: 0 for key in category_folders.keys()}
+
+        for file in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, file)
+            if not os.path.isfile(file_path):
+                continue
+
+            match = re.match(r"DJI_(\d{8})\d{6}_(\d{4})_(MS_[A-Z]+|[DF])", file)
+            if match:
+                date, image_num, identifier = match.groups()
+                new_name = None
+                destination_folder = folder_path
+                file_ext = os.path.splitext(file)[1].lower()
+
+                if file_ext == ".tif" and identifier in band_mapping:
+                    band_label = band_mapping[identifier]
+                    new_name = f"{project_id}_{location}_{date}_{image_num}_{band_label}.TIF"
+                    destination_folder = category_folders[band_label]
+
+                elif file_ext == ".jpg" and identifier in image_type_mapping:
+                    image_label = image_type_mapping[identifier]
+                    new_name = f"{project_id}_{location}_{date}_{image_num}_{image_label}.JPG"
+                    destination_folder = category_folders[image_label]
+                    # Extract EXIF metadata for JPG images
+                    exif_data = get_exif_data(file_path)
+                    meta_log.write(f"\nMetadata for: {new_name}\n" + "-"*50 + "\n")
+                    for key, value in exif_data.items():
+                        meta_log.write(f"{key}: {value}\n")
+
+                elif file_ext == ".mp4":
+                    # For videos, ignore the identifier and rename as Video
+                    new_name = f"{project_id}_{location}_{date}_{image_num}_Video.mp4"
+                    destination_folder = category_folders["Video"]
+
+                if new_name:
+                    new_path = os.path.join(destination_folder, new_name)
+                    try:
+                        shutil.move(file_path, new_path)
+                        proc_log.write(f"Renamed & Moved: {file} -> {new_path}\n")
+                        renamed_count += 1
+                        # Update processed count based on category
+                        if file_ext == ".mp4":
+                            processed_counts["Video"] += 1
+                        elif file_ext == ".tif":
+                            processed_counts[band_mapping[identifier]] += 1
+                        elif file_ext == ".jpg":
+                            processed_counts[image_type_mapping[identifier]] += 1
+                    except Exception as e:
+                        proc_log.write(f"❌ Error renaming {file}: {str(e)}\n")
+                        errors.append(f"{file}: {str(e)}")
+
+    print("\n📊 Processing Summary:")
+    for category, count in processed_counts.items():
+        print(f"  - {count} of {category_counts[category]} {category} files processed")
+
+    print(f"\n🎉 Processing complete! Logs saved at:\n  📄 {processing_log_path}\n  📄 {metadata_log_path}")
+
+# Run the script immediately using predefined variables
+rename_sort_extract_exif(FOLDER_PATH, PROJECT_ID, LOCATION)
