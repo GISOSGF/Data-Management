@@ -5,9 +5,9 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 
 # 🛠️ Define values before running
-FOLDER_PATH = r"C:\Users\kp.osgf\Desktop\Code Test"  # Copy the pathway for the folder that contains the drone images and videos
-PROJECT_ID = "ProjectA" # Name your project, keep the name the same for each flight if for the same project, date
-LOCATION = "ForestSite1" # Where is this project happening? Field 3, RKB Woods, Main House, etc
+PARENT_FOLDER = r""
+PROJECT_ID = "Wildlife Garden"
+LOCATION = "23.1"
 
 # Define mappings for multispectral bands (TIF) and image categories for JPG
 band_mapping = {
@@ -62,8 +62,8 @@ def get_exif_data(image_path):
     return exif_data
 
 def rename_sort_extract_exif(folder_path, project_id, location, 
-                               processing_log="processing_log.txt", 
-                               metadata_log="metadata_log.txt"):
+                             processing_log="processing_log.txt", 
+                             metadata_log="metadata_log.txt"):
     """
     Renames and sorts drone files into categorized folders and extracts EXIF metadata 
     for TrueColor and NDVI JPG images.
@@ -79,7 +79,7 @@ def rename_sort_extract_exif(folder_path, project_id, location,
     renamed_count = 0  
     errors = []  
 
-    # Create necessary subfolders (added "Video")
+    # Create necessary subfolders
     category_folders = {
         "TrueColor": os.path.join(folder_path, "TrueColor"),
         "NDVI": os.path.join(folder_path, "NDVI"),
@@ -104,7 +104,6 @@ def rename_sort_extract_exif(folder_path, project_id, location,
             total_files += 1
             print(f"  📂 Checking file: {file}")
             file_ext = os.path.splitext(file)[1].lower()
-            # Use regex to capture date, image number, and identifier (for all files)
             match = re.match(r"DJI_(\d{8})\d{6}_(\d{4})_(MS_[A-Z]+|[DF])", file)
             if match:
                 if file_ext == ".mp4":
@@ -151,14 +150,12 @@ def rename_sort_extract_exif(folder_path, project_id, location,
                     image_label = image_type_mapping[identifier]
                     new_name = f"{project_id}_{location}_{date}_{image_num}_{image_label}.JPG"
                     destination_folder = category_folders[image_label]
-                    # Extract EXIF metadata for JPG images
                     exif_data = get_exif_data(file_path)
                     meta_log.write(f"\nMetadata for: {new_name}\n" + "-"*50 + "\n")
                     for key, value in exif_data.items():
                         meta_log.write(f"{key}: {value}\n")
 
                 elif file_ext == ".mp4":
-                    # For videos, ignore the identifier and rename as Video
                     new_name = f"{project_id}_{location}_{date}_{image_num}_Video.mp4"
                     destination_folder = category_folders["Video"]
 
@@ -168,7 +165,6 @@ def rename_sort_extract_exif(folder_path, project_id, location,
                         shutil.move(file_path, new_path)
                         proc_log.write(f"Renamed & Moved: {file} -> {new_path}\n")
                         renamed_count += 1
-                        # Update processed count based on category
                         if file_ext == ".mp4":
                             processed_counts["Video"] += 1
                         elif file_ext == ".tif":
@@ -185,5 +181,23 @@ def rename_sort_extract_exif(folder_path, project_id, location,
 
     print(f"\n🎉 Processing complete! Logs saved at:\n  📄 {processing_log_path}\n  📄 {metadata_log_path}")
 
-# Run the script immediately using predefined variables
-rename_sort_extract_exif(FOLDER_PATH, PROJECT_ID, LOCATION)
+def process_all_subfolders(parent_folder, project_id, location):
+    """Processes each subfolder inside the parent folder."""
+    if not os.path.isdir(parent_folder):
+        print("❌ Error: Provided path is not a valid directory.")
+        return
+
+    subfolders = [os.path.join(parent_folder, d) for d in os.listdir(parent_folder) if os.path.isdir(os.path.join(parent_folder, d))]
+
+    if not subfolders:
+        print("⚠️ No subfolders found in the parent folder.")
+        return
+
+    print(f"\n📁 Found {len(subfolders)} folders. Beginning batch processing...\n")
+
+    for i, subfolder in enumerate(subfolders, 1):
+        print(f"\n🔄 Processing folder {i}/{len(subfolders)}: {os.path.basename(subfolder)}")
+        rename_sort_extract_exif(subfolder, project_id, location)
+
+# 🔁 Run the batch processor on all subfolders
+process_all_subfolders(PARENT_FOLDER, PROJECT_ID, LOCATION)
