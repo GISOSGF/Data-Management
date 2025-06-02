@@ -1,0 +1,178 @@
+import os
+import csv
+import re
+from datetime import datetime
+import exifread
+
+# ---------------------------------------------
+# Supported file extensions
+# ---------------------------------------------
+IMAGE_EXTENSIONS = (
+    '.jpg', '.jpeg', '.tif', '.tiff', '.png', '.bmp', '.gif',
+    '.heic', '.webp', '.dng'
+)
+VIDEO_EXTENSIONS = (
+    '.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv'
+)
+ALL_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+# ---------------------------------------------
+# Helper: Look for an 8-digit date (MMDDYYYY) at end of filename
+# ---------------------------------------------
+def find_date_in_filename(name):
+    match = re.search(r'(\d{8})$', name)
+    return match.group(1) if match else None
+
+# ---------------------------------------------
+# Helper: Convert "YYYY:MM:DD HH:MM:SS" → "MMDDYYYY"
+# ---------------------------------------------
+def format_date_mmddyyyy(exif_date):
+    try:
+        dt = datetime.strptime(exif_date, "%Y:%m:%d %H:%M:%S")
+        return dt.strftime("%m%d%Y")
+    except Exception:
+        return None
+
+# ---------------------------------------------
+# Extract EXIF date & GPS from image via exifread
+# ---------------------------------------------
+def get_image_metadata(path):
+    date_str = None
+    lat = lon = None
+    try:
+        with open(path, "rb") as f:
+            # Read ALL tags (no stop_tag), so GPS tags are included
+            tags = exifread.process_file(f, details=False)
+        # Date priority
+        for tag in ("EXIF DateTimeOriginal", "EXIF DateTimeDigitized", "Image DateTime"):
+            if tag in tags:
+                date_str = str(tags[tag])
+                break
+
+        # GPS tags (if present)
+        gps_lat = tags.get("GPS GPSLatitude")
+        gps_lat_ref = tags.get("GPS GPSLatitudeRef")
+        gps_lon = tags.get("GPS GPSLongitude")
+        gps_lon_ref = tags.get("GPS GPSLongitudeRef")
+        if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
+            def to_deg(vals):
+                d = float(vals.values[0].num) / vals.values[0].den
+                m = float(vals.values[1].num) / vals.values[1].den
+                s = float(vals.values[2].num) / vals.values[2].den
+                return d + (m / 60.0) + (s / 3600.0)
+
+            lat = to_deg(gps_lat)
+            if str(gps_lat_ref) != "N":
+                lat = -lat
+            lon = to_deg(gps_lon)
+            if str(gps_lon_ref) != "E":
+                lon = -lon
+    except Exception:
+        return None, None, None
+
+    return date_str, lat, lon
+
+# ---------------------------------------------
+# Use file modification time for video date
+# ---------------------------------------------
+def get_video_metadata(path):
+    try:
+        mtime = os.path.getmtime(path)
+        dt = datetime.fromtimestamp(mtime)
+        return dt.strftime("%Y:%m:%d %H:%M:%S"), None, None
+    except Exception:
+        return None, None, None
+
+# ---------------------------------------------
+# Process a single folder: rename + collect metadata + write CSV
+# ---------------------------------------------
+def process_single_folder(folder_path):
+    records = []
+    total_files = 0
+    processed_files = 0
+
+    for fname in os.listdir(folder_path):
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in ALL_EXTENSIONS:
+            continue
+
+        total_files += 1
+        full_path = os.path.join(folder_path, fname)
+        base, extension = os.path.splitext(fname)
+
+        # 1) Pull metadata
+        if ext in IMAGE_EXTENSIONS:
+            date_str, lat, lon = get_image_metadata(full_path)
+        else:
+            date_str, lat, lon = get_video_metadata(full_path)
+
+        # 2) If no metadata date, try filename fallback
+        if not date_str:
+            fallback = find_date_in_filename(base)
+            if fallback:
+                try:
+                    dt = datetime.strptime(fallback, "%m%d%Y")
+                    date_str = dt.strftime("%Y:%m:%d %H:%M:%S")
+                except Exception:
+                    date_str = None
+
+        # 3) If still no date → skip
+        if not date_str:
+            continue
+
+        # 4) Format to MMDDYYYY
+        formatted = format_date_mmddyyyy(date_str)
+        if not formatted:
+            continue
+
+        # 5) Rename if needed
+        if base.endswith(f"_{formatted}"):
+            new_name = fname
+        else:
+            new_name = f"{base}_{formatted}{extension}"
+            new_full = os.path.join(folder_path, new_name)
+            if not os.path.exists(new_full):
+                try:
+                    os.rename(full_path, new_full)
+                except Exception:
+                    new_name = fname  # on failure, keep original
+
+        processed_files += 1
+
+        records.append({
+            "NewFilename": new_name,
+            "DateTaken": date_str,
+            "Latitude": lat if lat is not None else "",
+            "Longitude": lon if lon is not None else ""
+        })
+
+    # Write CSV in this folder if any records exist
+    if records:
+        folder_name = os.path.basename(folder_path.rstrip(os.sep))
+        csv_name = f"metadata_{folder_name}.csv"
+        csv_path = os.path.join(folder_path, csv_name)
+        with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
+            fieldnames = ["NewFilename", "DateTaken", "Latitude", "Longitude"]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in records:
+                writer.writerow(row)
+        print(f"📄 Saved: {csv_path}")
+
+    # Print summary for this folder
+    print(f"Folder: {folder_path}")
+    print(f"   Processed (dated/renamed): {processed_files} of {total_files} supported files.\n")
+
+# ---------------------------------------------
+# Walk through all subfolders, processing each
+# ---------------------------------------------
+def process_all_subfolders(parent_folder):
+    for root, dirs, files in os.walk(parent_folder):
+        process_single_folder(root)
+
+# ---------------------------------------------
+# Entry point: set your parent directory here
+# ---------------------------------------------
+if __name__ == "__main__":
+    parent_folder = r"PARENT FOLDER PATHWAY"
+    process_all_subfolders(parent_folder)
