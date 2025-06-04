@@ -5,9 +5,9 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 
 # 🛠️ Define values before running
-PARENT_FOLDER = r""
-PROJECT_ID = "Wildlife Garden"
-LOCATION = "23.1"
+PARENT_FOLDER = r"FOLDER PATHWAY"
+PROJECT_ID = "PROJECT NAME"
+LOCATION = "PLOT/SUBLOC/LOCATION"
 
 # Define mappings for multispectral bands (TIF) and image categories for JPG
 band_mapping = {
