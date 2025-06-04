@@ -4,7 +4,8 @@ import re
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 
-# 🛠️ Define values before running
+# 🛠️ START HERE
+# All you need to input is the folder pathway to the images and then define the project and location values
 PARENT_FOLDER = r"FOLDER PATHWAY"
 PROJECT_ID = "PROJECT NAME"
 LOCATION = "PLOT/SUBLOC/LOCATION"
