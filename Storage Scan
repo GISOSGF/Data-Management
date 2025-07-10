@@ -4,6 +4,25 @@ import shutil
 import matplotlib.pyplot as plt
 import time
 
+# -----------------------------------------------------------------------------
+# This script scans specified drives (e.g., C:\ and D:\), calculates the size of each 
+# top‐level folder in gigabytes, logs progress to a UTF‐8 text file, and compiles the 
+# results into a CSV and a bar chart of the top 10 largest folders.
+#
+# Requirements:
+# - Python 3.x (includes built-in modules: os, shutil, time, csv)
+# - pandas (install via pip: pip install pandas)
+# - matplotlib (install via pip: pip install matplotlib)
+#
+# Setup:
+# 1. Ensure pandas and matplotlib are installed.
+# 2. Edit the `drives` list to include any drive letters or mount points you wish to scan.
+# 3. Optionally change `log_file` and CSV output filenames as needed.
+# 4. Run the script; it will log progress, output 'storage_analysis_results.csv', 
+#    and display a bar chart of the top 10 largest folders.
+# -----------------------------------------------------------------------------
+
+
 # Set the drive(s) to scan
 drives = ["C:\\", "D:\\"]
 log_file = "storage_scan_log.txt"
