@@ -2,6 +2,23 @@ import os
 import csv
 import exifread
 
+# -----------------------------------------------------------------------------
+# This script scans a specified parent folder (and all subfolders),
+# extracts all EXIF metadata from each image file,
+# converts any GPS coordinates into decimal degrees,
+# and writes a CSV named metadata_<foldername>.csv in each folder, including subfolders.
+#
+# Requirements:
+# - Python 3.x
+# - exifread library (install via pip: pip install exifread)
+#
+# Setup:
+# 1. Ensure exifread is installed.
+# 2. Under Configure HERE, set the `parent_folder` variable to the full path of your folder containing images.
+# 3. Run the script; it will process images in the parent folder and subfolders and generate CSVs of metadata.
+# -----------------------------------------------------------------------------
+
+
 # ---------------------------------------------
 # Supported image extensions
 # ---------------------------------------------
@@ -107,7 +124,9 @@ def process_all_folders(parent_folder):
         extract_exif_to_csv(root)
     print("\nAll done.")
 
+
+# Configure HERE
 if __name__ == "__main__":
-    # ← Set your parent folder path here:
-    parent_folder = r"PATHWAY TO YOUR FOLDER HERE"
+
+    parent_folder = r"PATHWAY TO YOUR FOLDER HERE" # Paste parent folder pathway for images here
     process_all_folders(parent_folder)
