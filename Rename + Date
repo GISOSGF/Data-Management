@@ -1,0 +1,105 @@
+import os
+import csv
+import exifread
+from datetime import datetime
+
+# ---------------------------------------------
+# Supported file extensions
+# ---------------------------------------------
+IMAGE_EXTENSIONS = (
+    '.jpg', '.jpeg', '.tif', '.tiff', '.png', '.bmp', '.gif',
+    '.heic', '.webp', '.dng'
+)
+VIDEO_EXTENSIONS = (
+    '.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv'
+)
+ALL_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+def get_file_date(path):
+    """
+    Return the capture date as YYYYMMDD.
+    - For images: try EXIF DateTimeOriginal
+    - Otherwise (videos or fallback): use file modification time
+    """
+    date_str = None
+    ext = os.path.splitext(path)[1].lower()
+
+    if ext in IMAGE_EXTENSIONS:
+        try:
+            with open(path, 'rb') as f:
+                tags = exifread.process_file(f, stop_tag='EXIF DateTimeOriginal')
+            for tag in ('EXIF DateTimeOriginal', 'EXIF DateTimeDigitized', 'Image DateTime'):
+                if tag in tags:
+                    date_str = str(tags[tag])
+                    break
+        except Exception:
+            date_str = None
+
+    if not date_str:
+        mtime = os.path.getmtime(path)
+        date_str = datetime.fromtimestamp(mtime).strftime('%Y:%m:%d %H:%M:%S')
+
+    try:
+        dt = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
+        return dt.strftime('%Y%m%d')
+    except ValueError:
+        return datetime.now().strftime('%Y%m%d')
+
+def process_folder(folder_path, prefix=None):
+    """
+    Rename files in folder_path:
+      - If prefix: prefix_index_YYYYMMDD.ext
+      - Else: originalname_YYYYMMDD.ext
+    Log all renames to rename_log_<foldername>.csv.
+    """
+    folder_name = os.path.basename(folder_path.rstrip(os.sep)) or "root"
+    print(f"\nProcessing: {folder_path}")
+
+    files = sorted(
+        f for f in os.listdir(folder_path)
+        if os.path.splitext(f)[1].lower() in ALL_EXTENSIONS
+    )
+    print(f"  Found {len(files)} file(s).")
+
+    log = []
+    count = 0
+
+    for idx, filename in enumerate(files, start=1):
+        base, ext = os.path.splitext(filename)
+        old = os.path.join(folder_path, filename)
+        date_code = get_file_date(old)
+        new_base = f"{prefix}_{idx}" if prefix else base
+        new_name = f"{new_base}_{date_code}{ext}"
+        new = os.path.join(folder_path, new_name)
+
+        if new_name != filename and not os.path.exists(new):
+            try:
+                os.rename(old, new)
+                count += 1
+                log.append({"OriginalFilename": filename, "NewFilename": new_name})
+            except Exception as e:
+                print(f"    ⚠️ Failed: {filename} → {e}")
+
+    print(f"  Renamed {count}/{len(files)} file(s).")
+
+    if log:
+        csv_path = os.path.join(folder_path, f"rename_log_{folder_name}.csv")
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=["OriginalFilename", "NewFilename"])
+            writer.writeheader()
+            writer.writerows(log)
+        print(f"  Log saved: {csv_path}")
+
+def recurse_and_rename(parent_folder, prefix=None):
+    print(f"=== START: {parent_folder} ===")
+    for root, _, _ in os.walk(parent_folder):
+        process_folder(root, prefix)
+    print("=== COMPLETE ===")
+
+if __name__ == "__main__":
+    # === CONFIGURE HERE ===
+    parent_folder = r"Folder Pathway"   # Folder Pathway to images
+    prefix = "define your prefix"             # If you want to rename your images define the prefix and they will be renamed sequentially. Prefix_1_Date, Prefix_2_Date etc. If undefined, original file will remain with the date added to the end.
+                                              #
+
+    recurse_and_rename(parent_folder, prefix)
