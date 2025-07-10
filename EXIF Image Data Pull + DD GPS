@@ -1,0 +1,113 @@
+import os
+import csv
+import exifread
+
+# ---------------------------------------------
+# Supported image extensions
+# ---------------------------------------------
+IMAGE_EXTENSIONS = (
+    '.jpg', '.jpeg', '.tif', '.tiff', '.png', '.bmp', '.gif',
+    '.heic', '.webp', '.dng'
+)
+
+def to_decimal_degrees(dms, ref):
+    """
+    Convert an ExifRead DMS value + ref ("N","S","E","W")
+    into a signed decimal degree float.
+    """
+    deg = float(dms.values[0].num) / dms.values[0].den
+    minute = float(dms.values[1].num) / dms.values[1].den
+    second = float(dms.values[2].num) / dms.values[2].den
+    dec = deg + (minute / 60.0) + (second / 3600.0)
+    if ref in ("S", "W"):
+        dec = -dec
+    return dec
+
+def extract_exif_to_csv(folder_path):
+    """
+    Process a single folder: find images, extract EXIF tags,
+    compute decimal lat/long, and write metadata_<foldername>.csv
+    """
+    folder_name = os.path.basename(folder_path.rstrip(os.sep)) or "root"
+    print(f"\n---\nProcessing folder: {folder_path}")
+    
+    # Gather image files
+    images = [
+        f for f in os.listdir(folder_path)
+        if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS
+    ]
+    total = len(images)
+    print(f"Found {total} image file(s).")
+
+    records = []
+    for idx, fname in enumerate(images, start=1):
+        print(f"  [{idx}/{total}] {fname}")
+        full_path = os.path.join(folder_path, fname)
+        try:
+            with open(full_path, 'rb') as img_file:
+                tags = exifread.process_file(img_file, details=False)
+        except Exception as e:
+            print(f"    ⛔ Error reading {fname}: {e}")
+            continue
+
+        # Build base record with all tags
+        rec = {'Filename': fname}
+        for tag, val in tags.items():
+            rec[tag] = str(val)
+
+        # Compute decimal lat/lon if GPS tags present
+        lat_tag = tags.get("GPS GPSLatitude")
+        lat_ref = tags.get("GPS GPSLatitudeRef")
+        lon_tag = tags.get("GPS GPSLongitude")
+        lon_ref = tags.get("GPS GPSLongitudeRef")
+        if lat_tag and lat_ref and lon_tag and lon_ref:
+            try:
+                dec_lat = to_decimal_degrees(lat_tag, str(lat_ref))
+                dec_lon = to_decimal_degrees(lon_tag, str(lon_ref))
+            except Exception:
+                dec_lat = dec_lon = None
+        else:
+            dec_lat = dec_lon = None
+
+        # Add new fields for decimal degrees
+        rec['DecimalLatitude'] = dec_lat
+        rec['DecimalLongitude'] = dec_lon
+
+        records.append(rec)
+
+    captured = len(records)
+    print(f"Captured metadata for {captured} of {total} image(s).")
+
+    # Write CSV if any records
+    if captured:
+        # Union of all keys to form header
+        all_keys = set().union(*(r.keys() for r in records))
+        # Ensure Filename, DecimalLatitude, DecimalLongitude appear first
+        sorted_keys = ['Filename', 'DecimalLatitude', 'DecimalLongitude'] + \
+                      sorted(k for k in all_keys
+                             if k not in ('Filename','DecimalLatitude','DecimalLongitude'))
+
+        csv_name = f"metadata_{folder_name}.csv"
+        csv_path = os.path.join(folder_path, csv_name)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=sorted_keys)
+            writer.writeheader()
+            writer.writerows(records)
+        print(f"✅ Wrote: {csv_path}")
+    else:
+        print("No EXIF metadata captured; skipping CSV.")
+
+def process_all_folders(parent_folder):
+    """
+    Walk through parent_folder and all subfolders,
+    running extract_exif_to_csv on each.
+    """
+    print(f"Starting EXIF extraction in: {parent_folder}")
+    for root, dirs, files in os.walk(parent_folder):
+        extract_exif_to_csv(root)
+    print("\nAll done.")
+
+if __name__ == "__main__":
+    # ← Set your parent folder path here:
+    parent_folder = r"PATHWAY TO YOUR FOLDER HERE"
+    process_all_folders(parent_folder)
