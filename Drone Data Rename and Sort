@@ -4,6 +4,31 @@ import re
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 
+# -----------------------------------------------------------------------------
+# This script organizes and renames DJI Mavic 3M drone files in a given parent folder.
+# It sorts multi-spectral TIFFs, TrueColor/NDVI JPGs, and MP4 videos into dedicated
+# subfolders, renames them using a project ID, location, date, and band/type labels,
+# extracts EXIF metadata from JPGs, and writes processing and metadata logs.
+#
+# Requirements:
+# - Python 3.x (includes built-in modules: os, shutil, re, datetime, csv)
+# - Pillow library for image/EXIF support (install via pip: pip install pillow)
+# - exifread library for detailed EXIF extraction (install via pip: pip install exifread)
+# - Juypter Notebook via Ananaconda
+#
+# Setup:
+# 1. Ensure Pillow and exifread are installed.
+# 2. Set the following at the top of the script:
+#      • PARENT_FOLDER = r"<full path to your root directory of drone files>"
+#      • PROJECT_ID    = "<your project identifier>"
+#      • LOCATION      = "<plot/sub-location identifier>"
+# 3. Run the script. It will process each immediate subfolder of PARENT_FOLDER,
+#    creating standardized filenames, sorting into category folders, and generating:
+#      • processing_log.txt   – record of moves/renames/errors
+#      • metadata_log.txt     – EXIF details for each JPG
+# -----------------------------------------------------------------------------
+
+
 # 🛠️ START HERE
 # All you need to input is the folder pathway to the images and then define the project and location values
 PARENT_FOLDER = r"FOLDER PATHWAY"
