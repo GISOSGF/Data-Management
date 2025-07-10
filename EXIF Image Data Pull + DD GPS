@@ -6,11 +6,12 @@ import exifread
 # This script scans a specified parent folder (and all subfolders),
 # extracts all EXIF metadata from each image file,
 # converts any GPS coordinates into decimal degrees,
-# and writes a CSV named metadata_<foldername>.csv in each folder, including subfolders.
+# and writes a CSV named 'metadata_<foldername>.csv' for images in the parent folder and separate csvs for the subfolders.
 #
 # Requirements:
 # - Python 3.x
 # - exifread library (install via pip: pip install exifread)
+# - Jupyter Notebook via Anaconda to run
 #
 # Setup:
 # 1. Ensure exifread is installed.
