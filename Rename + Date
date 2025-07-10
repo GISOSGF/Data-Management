@@ -11,8 +11,9 @@ from datetime import datetime
 # listing original and new filenames for easy rollback.
 #
 # Requirements:
-# - Python 3.x (includes built-in modules: os, csv, datetime)
+# - Python 3.x 
 # - exifread library (install via pip: pip install exifread)
+# - Jupyter Notebook via Anaconda to run
 #
 # Setup:
 # 1. Ensure exifread is installed; os, csv, and datetime are part of Python’s standard library.
