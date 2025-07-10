@@ -10,9 +10,10 @@ import time
 # results into a CSV and a bar chart of the top 10 largest folders.
 #
 # Requirements:
-# - Python 3.x (includes built-in modules: os, shutil, time, csv)
+# - Python 3.x 
 # - pandas (install via pip: pip install pandas)
 # - matplotlib (install via pip: pip install matplotlib)
+# - Juypter Notebook via Ananaconda
 #
 # Setup:
 # 1. Ensure pandas and matplotlib are installed.
