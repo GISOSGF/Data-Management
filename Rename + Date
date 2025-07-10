@@ -3,6 +3,25 @@ import csv
 import exifread
 from datetime import datetime
 
+# -----------------------------------------------------------------------------
+# This script scans a specified parent folder (and all subfolders),
+# renames each image or video file by appending a capture date (YYYYMMDD)
+# and, if specified, a user-defined prefix plus a sequential index.
+# It also writes a CSV named rename_log_<foldername>.csv in each folder
+# listing original and new filenames for easy rollback.
+#
+# Requirements:
+# - Python 3.x (includes built-in modules: os, csv, datetime)
+# - exifread library (install via pip: pip install exifread)
+#
+# Setup:
+# 1. Ensure exifread is installed; os, csv, and datetime are part of Python’s standard library.
+# 2. Set the `parent_folder` variable to the full path of your target directory.
+# 3. Set the `prefix` variable to a string (e.g. "biggarden") or to None to retain original basenames.
+# 4. Run the script; it will process every subfolder, rename files, and generate per-folder logs.
+# -----------------------------------------------------------------------------
+
+
 # ---------------------------------------------
 # Supported file extensions
 # ---------------------------------------------
