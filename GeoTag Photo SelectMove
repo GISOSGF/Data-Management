@@ -3,11 +3,25 @@ import os
 import shutil
 from pathlib import Path
 
-# Moves selected features in the active map from a point layer with attribute field 'path' for pathway to move selected images into a new folder within the parent folder of the image foleder
+# =============================================================================
+# USER CONFIGURATION - EDIT THIS SECTION BEFORE RUNNING
+# =============================================================================
+
+# SET YOUR TARGET DIRECTORY PATH HERE:
+# This is where the "selected features" folder will be created
+# Examples:
+#   TARGET_DIRECTORY = r"C:\Projects\MyDroneProject"
+#   TARGET_DIRECTORY = r"D:\DroneData\2024\ProcessedImages"
+#   TARGET_DIRECTORY = r"\\server\share\projects\current"
+
+TARGET_DIRECTORY = r"C:\YourPathHere"  # <-- CHANGE THIS PATH
+
+# =============================================================================
 
 def move_selected_feature_files():
     """
     Moves files associated with selected features to a 'selected features' folder
+    at the highest accessible parent directory level
     """
     
     print("=" * 60)
@@ -63,39 +77,37 @@ def move_selected_feature_files():
             
         print(f"Valid file paths extracted: {len(file_paths)}")
         
-        # Determine parent directory from first valid path
-        first_valid_path = None
-        for path in file_paths:
-            if os.path.exists(path):
-                first_valid_path = path
-                break
-                
-        if not first_valid_path:
-            print("ERROR: No accessible files found from the provided paths")
+        # Validate and use the configured target directory
+        print("\nTARGET DIRECTORY SETUP:")
+        print(f"Configured target directory: {TARGET_DIRECTORY}")
+        
+        # Validate the configured path
+        if TARGET_DIRECTORY == r"C:\YourPathHere":
+            print("ERROR: You must edit the TARGET_DIRECTORY variable at the top of the script")
+            print("       Change 'C:\\YourPathHere' to your actual target directory path")
             return
             
-        parent_dir = os.path.dirname(first_valid_path)
-        target_folder = os.path.join(parent_dir, "selected features")
+        if not os.path.exists(TARGET_DIRECTORY):
+            print(f"ERROR: Configured directory does not exist: {TARGET_DIRECTORY}")
+            print("       Please check the TARGET_DIRECTORY path at the top of the script")
+            return
+            
+        if not os.path.isdir(TARGET_DIRECTORY):
+            print(f"ERROR: Configured path is not a directory: {TARGET_DIRECTORY}")
+            return
+            
+        if not os.access(TARGET_DIRECTORY, os.R_OK | os.W_OK):
+            print(f"ERROR: Directory is not readable/writable: {TARGET_DIRECTORY}")
+            return
         
-        print(f"Parent directory: {parent_dir}")
+        target_folder = os.path.join(TARGET_DIRECTORY, "selected features")
+        
+        print(f"✓ Target base directory: {TARGET_DIRECTORY}")
         print(f"Target folder: {target_folder}")
         
-        # Verify parent directory permissions
-        print("\nVERIFYING: Folder permissions...")
-        
-        if not os.path.exists(parent_dir):
-            print(f"ERROR: Parent directory does not exist: {parent_dir}")
-            return
-            
-        if not os.access(parent_dir, os.R_OK):
-            print(f"ERROR: Parent directory is not readable: {parent_dir}")
-            return
-            
-        if not os.access(parent_dir, os.W_OK):
-            print(f"ERROR: Parent directory is not writable: {parent_dir}")
-            return
-            
-        print("✓ Parent directory is accessible, readable, and writable")
+        # Verify target base directory permissions (already validated above)
+        print("\nVERIFYING: Target directory permissions...")
+        print("✓ Target directory is accessible, readable, and writable")
         
         # Create target folder if it doesn't exist
         if not os.path.exists(target_folder):
