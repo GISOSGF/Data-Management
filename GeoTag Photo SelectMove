@@ -1,0 +1,194 @@
+import arcpy
+import os
+import shutil
+from pathlib import Path
+
+# Moves selected features in the active map from a point layer with attribute field 'path' for pathway to move selected images into a new folder within the parent folder of the image foleder
+
+def move_selected_feature_files():
+    """
+    Moves files associated with selected features to a 'selected features' folder
+    """
+    
+    print("=" * 60)
+    print("STARTING: Selected Features File Mover")
+    print("=" * 60)
+    
+    try:
+        # Get the active map
+        aprx = arcpy.mp.ArcGISProject("CURRENT")
+        active_map = aprx.activeMap
+        
+        if not active_map:
+            print("ERROR: No active map found")
+            return
+            
+        print(f"Active map: {active_map.name}")
+        
+        # Find the point layer with selected features
+        point_layer = None
+        selected_count = 0
+        
+        for layer in active_map.listLayers():
+            if layer.isFeatureLayer:
+                # Check if layer has selected features
+                selection_count = int(arcpy.GetCount_management(layer).getOutput(0))
+                if selection_count > 0:
+                    # Verify it has a 'Path' field
+                    fields = [f.name for f in arcpy.ListFields(layer)]
+                    if 'Path' in fields:
+                        point_layer = layer
+                        selected_count = selection_count
+                        break
+        
+        if not point_layer:
+            print("ERROR: No layer found with selected features containing a 'Path' field")
+            return
+            
+        print(f"Found layer: {point_layer.name}")
+        print(f"Selected features identified: {selected_count}")
+        
+        # Get the file paths from selected features
+        file_paths = []
+        print("\nEXTRACTING: File paths from selected features...")
+        
+        with arcpy.da.SearchCursor(point_layer, ['Path']) as cursor:
+            for row in cursor:
+                if row[0]:  # Check if path is not None/empty
+                    file_paths.append(row[0])
+        
+        if not file_paths:
+            print("ERROR: No valid file paths found in selected features")
+            return
+            
+        print(f"Valid file paths extracted: {len(file_paths)}")
+        
+        # Determine parent directory from first valid path
+        first_valid_path = None
+        for path in file_paths:
+            if os.path.exists(path):
+                first_valid_path = path
+                break
+                
+        if not first_valid_path:
+            print("ERROR: No accessible files found from the provided paths")
+            return
+            
+        parent_dir = os.path.dirname(first_valid_path)
+        target_folder = os.path.join(parent_dir, "selected features")
+        
+        print(f"Parent directory: {parent_dir}")
+        print(f"Target folder: {target_folder}")
+        
+        # Verify parent directory permissions
+        print("\nVERIFYING: Folder permissions...")
+        
+        if not os.path.exists(parent_dir):
+            print(f"ERROR: Parent directory does not exist: {parent_dir}")
+            return
+            
+        if not os.access(parent_dir, os.R_OK):
+            print(f"ERROR: Parent directory is not readable: {parent_dir}")
+            return
+            
+        if not os.access(parent_dir, os.W_OK):
+            print(f"ERROR: Parent directory is not writable: {parent_dir}")
+            return
+            
+        print("✓ Parent directory is accessible, readable, and writable")
+        
+        # Create target folder if it doesn't exist
+        if not os.path.exists(target_folder):
+            try:
+                os.makedirs(target_folder)
+                print(f"✓ Created target folder: {target_folder}")
+            except Exception as e:
+                print(f"ERROR: Could not create target folder: {e}")
+                return
+        else:
+            print(f"✓ Target folder already exists: {target_folder}")
+        
+        # Verify target folder permissions
+        if not os.access(target_folder, os.W_OK):
+            print(f"ERROR: Target folder is not writable: {target_folder}")
+            return
+            
+        print("✓ Target folder is writable")
+        
+        # Process file movements
+        print(f"\nPROCESSING: Moving {len(file_paths)} files...")
+        print("-" * 40)
+        
+        moved_count = 0
+        error_count = 0
+        error_details = []
+        
+        for i, file_path in enumerate(file_paths, 1):
+            try:
+                # Check if source file exists
+                if not os.path.exists(file_path):
+                    error_msg = f"Source file does not exist: {file_path}"
+                    error_details.append(error_msg)
+                    print(f"  [{i}/{len(file_paths)}] ✗ {error_msg}")
+                    error_count += 1
+                    continue
+                
+                # Get filename and create destination path
+                filename = os.path.basename(file_path)
+                dest_path = os.path.join(target_folder, filename)
+                
+                # Handle filename conflicts
+                counter = 1
+                original_dest_path = dest_path
+                while os.path.exists(dest_path):
+                    name, ext = os.path.splitext(filename)
+                    new_filename = f"{name}_{counter}{ext}"
+                    dest_path = os.path.join(target_folder, new_filename)
+                    counter += 1
+                
+                # Move the file
+                shutil.move(file_path, dest_path)
+                moved_count += 1
+                
+                if dest_path != original_dest_path:
+                    print(f"  [{i}/{len(file_paths)}] ✓ Moved (renamed): {filename} → {os.path.basename(dest_path)}")
+                else:
+                    print(f"  [{i}/{len(file_paths)}] ✓ Moved: {filename}")
+                    
+            except Exception as e:
+                error_msg = f"Error moving {file_path}: {str(e)}"
+                error_details.append(error_msg)
+                print(f"  [{i}/{len(file_paths)}] ✗ {error_msg}")
+                error_count += 1
+        
+        # Final summary
+        print("\n" + "=" * 60)
+        print("FINISHED: File Movement Summary")
+        print("=" * 60)
+        print(f"Selected features in ArcGIS Pro: {selected_count}")
+        print(f"Valid file paths extracted: {len(file_paths)}")
+        print(f"Files successfully moved: {moved_count}")
+        print(f"Files with errors: {error_count}")
+        print(f"Target folder: {target_folder}")
+        
+        if error_details:
+            print(f"\nError Details:")
+            for error in error_details:
+                print(f"  • {error}")
+        
+        print(f"\n✓ VERIFICATION: Check your target folder contains {moved_count} files")
+        print(f"  Folder location: {target_folder}")
+        
+        if moved_count == selected_count:
+            print("✓ SUCCESS: File count matches selected features count!")
+        elif moved_count < selected_count:
+            print(f"⚠ WARNING: {selected_count - moved_count} files were not moved due to errors")
+        
+    except Exception as e:
+        print(f"FATAL ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+# Run the function
+if __name__ == "__main__":
+    move_selected_feature_files()
