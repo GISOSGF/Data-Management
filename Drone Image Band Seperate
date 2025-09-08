@@ -1,0 +1,172 @@
+import os
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+# Moves specified bands into a designated folder
+
+def extract_dji_bands(source_folder, destination_folder, bands_to_extract):
+    """
+    Extract specified DJI Mavic 3M bands from source folder to destination folder.
+    
+    Parameters:
+    source_folder (str): Path to folder containing all DJI imagery files
+    destination_folder (str): Path to folder where selected bands will be moved
+    bands_to_extract (list): List of band suffixes to extract
+    """
+    
+    # Start processing message
+    print("=" * 60)
+    print("DJI BAND EXTRACTION TOOL")
+    print("=" * 60)
+    print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Source Folder: {source_folder}")
+    print(f"Destination Folder: {destination_folder}")
+    print(f"Bands to Extract: {', '.join(bands_to_extract)}")
+    print("=" * 60)
+    
+    # Convert to Path objects for easier handling
+    source_path = Path(source_folder)
+    dest_path = Path(destination_folder)
+    
+    # Validate source folder
+    if not source_path.exists():
+        print(f"❌ ERROR: Source folder '{source_folder}' does not exist.")
+        return
+    
+    if not source_path.is_dir():
+        print(f"❌ ERROR: Source path '{source_folder}' is not a directory.")
+        return
+    
+    # Create destination folder if it doesn't exist
+    try:
+        dest_path.mkdir(parents=True, exist_ok=True)
+        print(f"✅ Destination folder ready: {destination_folder}")
+    except Exception as e:
+        print(f"❌ ERROR: Could not create destination folder: {str(e)}")
+        return
+    
+    # Get all files in source directory
+    print("\n🔍 SCANNING SOURCE FOLDER...")
+    all_files = [f for f in source_path.iterdir() if f.is_file()]
+    print(f"📁 Total files found in source: {len(all_files)}")
+    
+    # Initialize counters for identification phase
+    identified_files = {band: [] for band in bands_to_extract}
+    total_identified = 0
+    
+    # Identification phase
+    print("\n🔎 IDENTIFYING TARGET BAND FILES...")
+    for file_path in all_files:
+        file_name = file_path.name
+        
+        # Check if file matches any of the desired band patterns
+        for band in bands_to_extract:
+            # Handle different possible file extensions
+            if (file_name.endswith(band) or 
+                file_name.endswith(f"{band}.tif") or 
+                file_name.endswith(f"{band}.TIF") or
+                file_name.endswith(f"{band}.jpg") or
+                file_name.endswith(f"{band}.JPG")):
+                
+                identified_files[band].append(file_path)
+                total_identified += 1
+                break
+    
+    # Report identification results
+    print("\n📊 IDENTIFICATION SUMMARY:")
+    for band in bands_to_extract:
+        count = len(identified_files[band])
+        print(f"  {band}: {count} files identified")
+    print(f"  TOTAL: {total_identified} files identified for extraction")
+    
+    if total_identified == 0:
+        print("\n❌ NO MATCHING FILES FOUND!")
+        print("Please check:")
+        print("  1. Source folder path is correct")
+        print("  2. Files exist with the expected naming pattern")
+        print("  3. Band suffixes match your actual file names")
+        
+        # Show sample of files for debugging
+        if all_files:
+            print(f"\n🔍 Sample files in source folder (first 10):")
+            for i, sample_file in enumerate(all_files[:10]):
+                print(f"  {i+1}. {sample_file.name}")
+        return
+    
+    # Processing phase
+    print(f"\n⚙️ PROCESSING: Moving {total_identified} files...")
+    moved_files = {band: 0 for band in bands_to_extract}
+    total_moved = 0
+    errors = []
+    
+    for band in bands_to_extract:
+        if identified_files[band]:
+            print(f"\n📋 Processing {band} files ({len(identified_files[band])} files)...")
+            
+            for file_path in identified_files[band]:
+                dest_file = dest_path / file_path.name
+                
+                try:
+                    shutil.move(file_path, dest_file)
+                    moved_files[band] += 1
+                    total_moved += 1
+                    print(f"  ✅ Moved: {file_path.name}")
+                    
+                except Exception as e:
+                    error_msg = f"Failed to move {file_path.name}: {str(e)}"
+                    errors.append(error_msg)
+                    print(f"  ❌ Error: {error_msg}")
+    
+    # Final summary
+    print("\n" + "=" * 60)
+    print("🏁 EXTRACTION COMPLETE!")
+    print("=" * 60)
+    print(f"Finish Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n📈 FINAL SUMMARY:")
+    print(f"  Files Identified: {total_identified}")
+    print(f"  Files Successfully Moved: {total_moved}")
+    print(f"  Files with Errors: {len(errors)}")
+    
+    print(f"\n📊 FILES MOVED BY BAND:")
+    for band in bands_to_extract:
+        print(f"  {band}: {moved_files[band]} files")
+    
+    if errors:
+        print(f"\n⚠️ ERRORS ENCOUNTERED:")
+        for error in errors:
+            print(f"  - {error}")
+    
+    if total_moved > 0:
+        print(f"\n✅ SUCCESS: Files moved to {destination_folder}")
+    
+    print("=" * 60)
+
+# =============================================================================
+# USER CONFIGURATION SECTION
+# =============================================================================
+
+# MODIFY THESE PATHS FOR YOUR SPECIFIC NEEDS:
+
+# 1. SET YOUR SOURCE FOLDER PATH (where all DJI files are located)
+SOURCE_FOLDER = r"C:\Users\kp.osgf\Desktop\Thistle Working Final Plots\ThistlePlotA_40ft_07-31-25"
+
+# 2. SET YOUR DESTINATION FOLDER PATH (where you want the selected bands moved)
+DESTINATION_FOLDER = r"C:\Users\kp.osgf\Desktop\Thistle Working Final Plots\ThistlePlotA_40ft_07-31-25\MS"
+
+# 3. SELECT WHICH BANDS TO EXTRACT (modify this list as needed)
+BANDS_TO_EXTRACT = ['MS_RE', 'MS_NIR', 'MS_G']
+ #  'MS_RE',     Red Edge
+ #  'MS_R',      Red
+ # 'MS_NIR',    Near Infrared  
+ #  'MS_G',      Green
+ #   '_D'         RGB imagery
+
+
+# =============================================================================
+# EXECUTION SECTION
+# =============================================================================
+
+if __name__ == "__main__":
+    # Run the extraction with your settings
+    extract_dji_bands(SOURCE_FOLDER, DESTINATION_FOLDER, BANDS_TO_EXTRACT)
