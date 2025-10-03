@@ -1,0 +1,91 @@
+import zipfile
+import os
+import time
+
+print("="*70)
+print("           UNZIP ALL BACKUP FILES")
+print("="*70)
+
+# Set the folder containing your zipped backups
+backup_folder = input("Enter the path to your backup folder: ")
+
+if not os.path.exists(backup_folder):
+    print(f"✗ ERROR: Folder does not exist: {backup_folder}")
+    raise Exception("Folder not found")
+
+print(f"\n✓ Found backup folder: {backup_folder}")
+
+# Find all .zip files
+zip_files = [f for f in os.listdir(backup_folder) if f.endswith('.zip')]
+
+print(f"\n✓ Found {len(zip_files)} .zip files")
+
+if len(zip_files) == 0:
+    print("No .zip files to extract. Exiting.")
+    raise Exception("No zip files found")
+
+# Show what will be extracted
+print("\nFiles to extract:")
+for idx, zip_file in enumerate(zip_files, 1):
+    file_path = os.path.join(backup_folder, zip_file)
+    file_size = os.path.getsize(file_path) / (1024 * 1024)
+    print(f"  {idx}. {zip_file} ({file_size:.2f} MB)")
+
+proceed = input(f"\nExtract all {len(zip_files)} files? (yes/no): ")
+
+if proceed.lower() != 'yes':
+    print("Extraction cancelled.")
+    raise Exception("Cancelled by user")
+
+print("\n" + "="*70)
+print("STARTING EXTRACTION")
+print("="*70)
+
+start_time = time.time()
+success_count = 0
+failed_count = 0
+failed_files = []
+
+for idx, zip_file in enumerate(zip_files, 1):
+    try:
+        zip_path = os.path.join(backup_folder, zip_file)
+        
+        # Create extraction folder (remove .zip extension)
+        extract_folder = os.path.join(backup_folder, zip_file[:-4])
+        
+        print(f"\n[{idx}/{len(zip_files)}] Extracting: {zip_file}")
+        print(f"  → Destination: {extract_folder}")
+        
+        item_start = time.time()
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_folder)
+        
+        item_time = time.time() - item_start
+        
+        print(f"  ✓ SUCCESS (completed in {item_time:.1f}s)")
+        success_count += 1
+        
+    except Exception as e:
+        print(f"  ✗ FAILED: {str(e)}")
+        failed_count += 1
+        failed_files.append((zip_file, str(e)))
+        continue
+
+total_time = time.time() - start_time
+
+print("\n" + "="*70)
+print("EXTRACTION COMPLETE!")
+print("="*70)
+print(f"Total Duration: {total_time/60:.1f} minutes")
+print(f"Total files:    {len(zip_files)}")
+print(f"  Successful:   {success_count}")
+print(f"  Failed:       {failed_count}")
+
+if failed_files:
+    print("\nFailed files:")
+    for filename, error in failed_files:
+        print(f"  - {filename}: {error}")
+
+print(f"\nExtracted files location: {backup_folder}")
+print("="*70)
