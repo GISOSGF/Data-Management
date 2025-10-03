@@ -1,0 +1,242 @@
+from arcgis.gis import GIS
+import datetime as dt
+import os
+import time
+
+print("="*70)
+print("      STAGE 2: TILE LAYERS & IMAGE SERVICES BACKUP")
+print("      (ALL items - no date filter)")
+print("="*70)
+print(f"Start Time: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("="*70)
+
+# Connect to your Portal as admin
+print("\n[STEP 1/5] Connecting to Portal...")
+username = input("Enter your admin username: ")
+
+try:
+    gis = GIS("https://gis.oakspring.org/arcgisportal", username)
+    print(f"✓ Successfully connected as: {gis.users.me.username}")
+    print(f"✓ Role: {gis.users.me.role}")
+except Exception as e:
+    print(f"✗ ERROR: Failed to connect to Portal")
+    print(f"  Details: {str(e)}")
+    print("\nStopping script.")
+    raise
+
+# Set backup location
+print("\n[STEP 2/5] Setting up backup location...")
+folder_path = input("Enter backup location (e.g., D:\\OSGF RIP 10032025): ")
+
+if not os.path.exists(folder_path):
+    print(f"✗ ERROR: Path does not exist: {folder_path}")
+    print("\nStopping script.")
+    raise Exception("Path does not exist")
+
+# Create backup folder with date
+backup_date = dt.datetime.now().strftime("%Y%m%d")
+backup_folder = os.path.join(folder_path, f"Stage2_TilesImages_ALL_{backup_date}")
+
+try:
+    if not os.path.exists(backup_folder):
+        os.makedirs(backup_folder)
+    print(f"✓ Backup folder created: {backup_folder}")
+except Exception as e:
+    print(f"✗ ERROR: Could not create backup folder")
+    print(f"  Details: {str(e)}")
+    print("\nStopping script.")
+    raise
+
+# Search for ALL tile layers and image services (no date filter)
+print("\n[STEP 3/5] Searching for ALL Tile Layers and Image Services...")
+print("  Please wait, this may take a moment...")
+
+try:
+    start_search = time.time()
+    
+    tile_query = "type:\"Vector Tile Service\" OR type:\"Tile Layer\""
+    image_query = "type:\"Image Service\" OR type:\"Map Service\""
+    
+    tile_layers = gis.content.search(query=tile_query, max_items=10000)
+    image_services = gis.content.search(query=image_query, max_items=10000)
+    
+    search_time = time.time() - start_search
+    
+    print(f"✓ Search completed in {search_time:.1f} seconds")
+    print(f"✓ Found {len(tile_layers)} Tile Layers")
+    print(f"✓ Found {len(image_services)} Image/Map Services")
+    print(f"  Total to backup: {len(tile_layers) + len(image_services)}")
+    
+    if len(tile_layers) + len(image_services) == 0:
+        print("\n⚠ WARNING: No tile or image items found in organization")
+        print("Stopping script.")
+        raise Exception("No items found")
+    
+except Exception as e:
+    print(f"✗ ERROR: Failed to search for content")
+    print(f"  Details: {str(e)}")
+    print("\nStopping script.")
+    raise
+
+# Show what will be backed up
+print("\n" + "="*70)
+print("ITEMS TO BE BACKED UP:")
+print("="*70)
+
+if len(tile_layers) > 0:
+    print("\nTile Layers:")
+    for idx, item in enumerate(tile_layers, 1):
+        modified = dt.datetime.fromtimestamp(item.modified/1000).strftime('%Y-%m-%d')
+        print(f"  {idx}. {item.title} (Modified: {modified}, Owner: {item.owner})")
+
+if len(image_services) > 0:
+    print("\nImage/Map Services:")
+    for idx, item in enumerate(image_services, 1):
+        modified = dt.datetime.fromtimestamp(item.modified/1000).strftime('%Y-%m-%d')
+        print(f"  {idx}. {item.title} (Modified: {modified}, Owner: {item.owner})")
+
+# Ask if user wants to proceed
+print(f"\n[STEP 4/5] Ready to backup {len(tile_layers) + len(image_services)} items")
+print("  ⚠ WARNING: These files can be VERY LARGE (multiple GB each)")
+print("  This process may take several hours or even days")
+proceed = input("\nProceed with backup? (yes/no): ")
+
+if proceed.lower() != 'yes':
+    print("\n✗ Backup cancelled by user.")
+    raise Exception("Backup cancelled by user")
+
+# Backup function for tiles/images
+def backup_tile_image_layers(item_list, backup_location, content_type="Tile/Image Layer"):
+    success_count = 0
+    failed_count = 0
+    failed_items = []
+    
+    log_file = os.path.join(backup_location, f"backup_log_{content_type.replace(' ', '_').replace('/', '_')}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    
+    print("\n" + "="*70)
+    print(f"[STEP 5/5] STARTING {content_type.upper()} BACKUP")
+    print("="*70)
+    
+    start_time = time.time()
+    
+    with open(log_file, 'w') as log:
+        log.write("="*70 + "\n")
+        log.write(f"STAGE 2: {content_type.upper()} BACKUP\n")
+        log.write("="*70 + "\n")
+        log.write(f"Started: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"Filter: ALL items (no date filter)\n")
+        log.write(f"Total items found: {len(item_list)}\n")
+        log.write(f"Backup location: {backup_location}\n")
+        log.write("="*70 + "\n\n")
+        
+        for idx, item in enumerate(item_list, 1):
+            item_start_time = time.time()
+            
+            try:
+                print(f"\n[{idx}/{len(item_list)}] Processing: {item.title}")
+                print(f"  Owner: {item.owner}")
+                print(f"  Type: {item.type}")
+                print(f"  Progress: {((idx-1)/len(item_list)*100):.1f}% complete")
+                
+                modified_date = dt.datetime.fromtimestamp(item.modified/1000).strftime('%Y-%m-%d')
+                print(f"  Modified: {modified_date}")
+                
+                log.write(f"\n[{idx}/{len(item_list)}] {item.title}\n")
+                log.write(f"  Owner: {item.owner}\n")
+                log.write(f"  Type: {item.type}\n")
+                log.write(f"  Item ID: {item.id}\n")
+                log.write(f"  Modified: {modified_date}\n")
+                
+                version = dt.datetime.now().strftime("%Y%m%d")
+                
+                # Try to export based on type
+                if item.type == "Vector Tile Service":
+                    print(f"  → Exporting as Vector Tile Package...")
+                    export_title = f"{item.title}_{version}"
+                    result = item.export(export_title, "Vector Tile Package")
+                    download_path = result.download(save_path=backup_location)
+                    result.delete()
+                    
+                elif "Tile Layer" in item.type or "Tile Service" in item.type:
+                    print(f"  → Exporting as Tile Package...")
+                    export_title = f"{item.title}_{version}"
+                    result = item.export(export_title, "Tile Package")
+                    download_path = result.download(save_path=backup_location)
+                    result.delete()
+                    
+                else:
+                    # For Image Services and Map Services, try direct download
+                    print(f"  → Downloading directly...")
+                    download_path = item.download(save_path=backup_location)
+                
+                file_size = os.path.getsize(download_path) / (1024 * 1024)
+                print(f"  → Downloaded: {file_size:.2f} MB")
+                
+                item_time = time.time() - item_start_time
+                success_count += 1
+                success_msg = f"✓ SUCCESS: {item.title} (completed in {item_time:.1f}s)"
+                print(f"  {success_msg}")
+                
+                log.write(f"  Status: SUCCESS\n")
+                log.write(f"  File: {download_path}\n")
+                log.write(f"  Size: {file_size:.2f} MB\n")
+                log.write(f"  Time: {item_time:.1f} seconds\n")
+                
+            except Exception as e:
+                failed_count += 1
+                item_time = time.time() - item_start_time
+                
+                error_msg = f"✗ FAILED: {item.title}"
+                print(f"  {error_msg}")
+                print(f"  Error: {str(e)}")
+                
+                log.write(f"  Status: FAILED\n")
+                log.write(f"  Error: {str(e)}\n")
+                log.write(f"  Time: {item_time:.1f} seconds\n")
+                
+                failed_items.append({
+                    'title': item.title,
+                    'owner': item.owner,
+                    'type': item.type,
+                    'id': item.id,
+                    'error': str(e)
+                })
+                continue
+        
+        total_time = time.time() - start_time
+        
+        log.write("\n" + "="*70 + "\n")
+        log.write("BACKUP SUMMARY\n")
+        log.write("="*70 + "\n")
+        log.write(f"Completed: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"Total time: {total_time/60:.1f} minutes\n")
+        log.write(f"Items identified: {len(item_list)}\n")
+        log.write(f"Successful: {success_count}\n")
+        log.write(f"Failed: {failed_count}\n")
+        
+        if failed_items:
+            log.write("\nFAILED ITEMS:\n")
+            for idx, item in enumerate(failed_items, 1):
+                log.write(f"{idx}. {item['title']} (Owner: {item['owner']}, Type: {item['type']})\n")
+                log.write(f"   Error: {item['error']}\n")
+    
+    print("\n" + "="*70)
+    print(f"{content_type.upper()} BACKUP COMPLETE!")
+    print("="*70)
+    print(f"End Time: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Total Duration: {total_time/60:.1f} minutes")
+    print(f"Items Identified:  {len(item_list)}")
+    print(f"  Successful:      {success_count}")
+    print(f"  Failed:          {failed_count}")
+    print(f"\nBackup Location: {backup_location}")
+    print(f"Log File: {log_file}")
+    
+    return success_count, failed_count
+
+# Combine all items and backup
+all_items = tile_layers + image_services
+backup_tile_image_layers(all_items, backup_folder, "Tile & Image Layers")
+
+print("\n" + "="*70)
+print("STAGE 2 COMPLETE!")
+print("="*70)
