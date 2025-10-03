@@ -1,0 +1,222 @@
+from arcgis.gis import GIS
+import datetime as dt
+import os
+import time
+
+print("="*70)
+print("           STAGE 1: FEATURE SERVICES BACKUP")
+print("="*70)
+print(f"Start Time: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("="*70)
+
+# Connect to your Portal as admin
+print("\n[STEP 1/5] Connecting to Portal...")
+username = input("Enter your admin username: ")
+
+try:
+    gis = GIS("https://gis.oakspring.org/arcgisportal", username)
+    print(f"✓ Successfully connected as: {gis.users.me.username}")
+    print(f"✓ Role: {gis.users.me.role}")
+except Exception as e:
+    print(f"✗ ERROR: Failed to connect to Portal")
+    print(f"  Details: {str(e)}")
+    print("\nPlease check your username and password.")
+    exit()
+
+# Set backup location
+print("\n[STEP 2/5] Setting up backup location...")
+folder_path = input("Enter backup location (e.g., E:\\PortalBackup): ")
+
+# Verify the path exists
+if not os.path.exists(folder_path):
+    print(f"✗ ERROR: Path does not exist: {folder_path}")
+    create = input("Would you like to create this folder? (yes/no): ")
+    if create.lower() == 'yes':
+        try:
+            os.makedirs(folder_path)
+            print(f"✓ Created folder: {folder_path}")
+        except Exception as e:
+            print(f"✗ ERROR: Could not create folder")
+            print(f"  Details: {str(e)}")
+            exit()
+    else:
+        print("Backup cancelled.")
+        exit()
+
+# Create backup folder with date
+backup_date = dt.datetime.now().strftime("%Y%m%d")
+backup_folder = os.path.join(folder_path, f"Stage1_FeatureServices_{backup_date}")
+
+try:
+    if not os.path.exists(backup_folder):
+        os.makedirs(backup_folder)
+    print(f"✓ Backup folder created: {backup_folder}")
+except Exception as e:
+    print(f"✗ ERROR: Could not create backup folder")
+    print(f"  Details: {str(e)}")
+    exit()
+
+# Search for ALL Feature Services in the organization
+print("\n[STEP 3/5] Searching for Feature Services in organization...")
+print("  Please wait, this may take a moment...")
+
+try:
+    start_search = time.time()
+    feature_services = gis.content.search(query="type:Feature Service", max_items=10000)
+    search_time = time.time() - start_search
+    
+    print(f"✓ Search completed in {search_time:.1f} seconds")
+    print(f"✓ Found {len(feature_services)} Feature Services")
+    
+    # Count views separately
+    views = [item for item in feature_services if 'View Service' in item.typeKeywords]
+    hosted = [item for item in feature_services if 'View Service' not in item.typeKeywords]
+    
+    print(f"  - {len(hosted)} Hosted Feature Services (will be backed up)")
+    print(f"  - {len(views)} Feature Layer Views (will be skipped)")
+    
+except Exception as e:
+    print(f"✗ ERROR: Failed to search for Feature Services")
+    print(f"  Details: {str(e)}")
+    exit()
+
+if len(feature_services) == 0:
+    print("\n⚠ WARNING: No Feature Services found in organization")
+    print("Backup cancelled.")
+    exit()
+
+# Ask if user wants to proceed
+print(f"\n[STEP 4/5] Ready to backup {len(hosted)} Feature Services")
+print(f"  Estimated time: {len(hosted) * 0.5:.0f}-{len(hosted) * 2:.0f} minutes (approximate)")
+proceed = input("\nProceed with backup? (yes/no): ")
+
+if proceed.lower() != 'yes':
+    print("\n✗ Backup cancelled by user.")
+    exit()
+
+# Backup function
+def backup_feature_services(item_list, backup_location):
+    success_count = 0
+    failed_count = 0
+    skipped_count = 0
+    failed_items = []
+    skipped_items = []
+    
+    log_file = os.path.join(backup_location, f"backup_log_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    
+    print("\n" + "="*70)
+    print("[STEP 5/5] STARTING BACKUP PROCESS")
+    print("="*70)
+    
+    start_time = time.time()
+    
+    with open(log_file, 'w') as log:
+        log.write("="*70 + "\n")
+        log.write("STAGE 1: FEATURE SERVICES BACKUP\n")
+        log.write("="*70 + "\n")
+        log.write(f"Started: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"Total items found: {len(item_list)}\n")
+        log.write(f"Backup location: {backup_location}\n")
+        log.write("="*70 + "\n\n")
+        
+        for idx, item in enumerate(item_list, 1):
+            item_start_time = time.time()
+            
+            try:
+                if 'View Service' in item.typeKeywords:
+                    skipped_count += 1
+                    msg = f"[{idx}/{len(item_list)}] SKIPPED: {item.title} (View Service)"
+                    print(msg)
+                    log.write(msg + "\n")
+                    skipped_items.append(item.title)
+                    continue
+                
+                print(f"\n[{idx}/{len(item_list)}] Processing: {item.title}")
+                print(f"  Owner: {item.owner}")
+                print(f"  Progress: {((idx-1)/len(item_list)*100):.1f}% complete")
+                
+                log.write(f"\n[{idx}/{len(item_list)}] {item.title}\n")
+                log.write(f"  Owner: {item.owner}\n")
+                log.write(f"  Item ID: {item.id}\n")
+                
+                print(f"  → Exporting to File Geodatabase...")
+                version = dt.datetime.now().strftime("%Y%m%d")
+                export_title = f"{item.title}_{version}"
+                
+                result = item.export(export_title, "File Geodatabase")
+                print(f"  → Export created successfully")
+                log.write(f"  Export: Success\n")
+                
+                print(f"  → Downloading...")
+                download_path = result.download(save_path=backup_location)
+                file_size = os.path.getsize(download_path) / (1024 * 1024)
+                print(f"  → Downloaded: {file_size:.2f} MB")
+                log.write(f"  Download: Success ({file_size:.2f} MB)\n")
+                log.write(f"  File: {download_path}\n")
+                
+                print(f"  → Cleaning up temporary export...")
+                result.delete()
+                log.write(f"  Cleanup: Success\n")
+                
+                item_time = time.time() - item_start_time
+                success_count += 1
+                success_msg = f"✓ SUCCESS: {item.title} (completed in {item_time:.1f}s)"
+                print(f"  {success_msg}")
+                log.write(f"  Status: SUCCESS\n")
+                log.write(f"  Time: {item_time:.1f} seconds\n")
+                
+            except Exception as e:
+                failed_count += 1
+                item_time = time.time() - item_start_time
+                
+                error_msg = f"✗ FAILED: {item.title}"
+                print(f"  {error_msg}")
+                print(f"  Error: {str(e)}")
+                
+                log.write(f"  Status: FAILED\n")
+                log.write(f"  Error: {str(e)}\n")
+                
+                failed_items.append({
+                    'title': item.title,
+                    'owner': item.owner,
+                    'id': item.id,
+                    'error': str(e)
+                })
+                continue
+        
+        total_time = time.time() - start_time
+        
+        log.write("\n" + "="*70 + "\n")
+        log.write("BACKUP SUMMARY\n")
+        log.write("="*70 + "\n")
+        log.write(f"Completed: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"Total time: {total_time/60:.1f} minutes\n")
+        log.write(f"Items identified: {len(item_list)}\n")
+        log.write(f"Items processed: {success_count + failed_count}\n")
+        log.write(f"Successful: {success_count}\n")
+        log.write(f"Skipped (Views): {skipped_count}\n")
+        log.write(f"Failed: {failed_count}\n")
+        
+        if failed_items:
+            log.write("\nFAILED ITEMS:\n")
+            for idx, item in enumerate(failed_items, 1):
+                log.write(f"{idx}. {item['title']} (Owner: {item['owner']})\n")
+                log.write(f"   Error: {item['error']}\n")
+    
+    print("\n" + "="*70)
+    print("STAGE 1 BACKUP COMPLETE!")
+    print("="*70)
+    print(f"End Time: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Total Duration: {total_time/60:.1f} minutes")
+    print(f"Items Identified:  {len(item_list)}")
+    print(f"Items Processed:   {success_count + failed_count}")
+    print(f"  Successful:      {success_count}")
+    print(f"  Skipped:         {skipped_count}")
+    print(f"  Failed:          {failed_count}")
+    print(f"\nBackup Location: {backup_location}")
+    print(f"Log File: {log_file}")
+    
+    return success_count, failed_count, skipped_count
+
+# Run the backup
+backup_feature_services(feature_services, backup_folder)
