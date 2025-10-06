@@ -1,0 +1,236 @@
+from arcgis.gis import GIS
+import os
+import time
+import datetime as dt
+
+print("="*70)
+print("     COMPREHENSIVE ATTACHMENT BACKUP")
+print("="*70)
+print(f"Start Time: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("="*70)
+
+# Connect to Portal
+print("\n[STEP 1/4] Connecting to Portal...")
+username = input("Enter your admin username: ")
+
+try:
+    gis = GIS("https://gis.oakspring.org/arcgisportal", username)
+    print(f"✓ Successfully connected as: {gis.users.me.username}")
+except Exception as e:
+    print(f"✗ ERROR: Failed to connect")
+    print(f"  Details: {str(e)}")
+    raise
+
+# Set backup location
+print("\n[STEP 2/4] Setting up backup location...")
+backup_folder = input("Enter backup location (e.g., D:\\OSGF RIP 10032025\\Attachments): ")
+
+if not os.path.exists(backup_folder):
+    try:
+        os.makedirs(backup_folder)
+        print(f"✓ Created backup folder: {backup_folder}")
+    except Exception as e:
+        print(f"✗ ERROR: Could not create folder")
+        raise
+
+# Search for all feature services
+print("\n[STEP 3/4] Searching for feature services with attachments...")
+print("  This may take a few minutes...")
+
+feature_services = gis.content.search(query="type:Feature Service", max_items=10000)
+print(f"✓ Found {len(feature_services)} feature services")
+
+# Find services with attachments
+services_with_attachments = []
+
+print("\nScanning for attachments...")
+for idx, item in enumerate(feature_services, 1):
+    try:
+        print(f"  [{idx}/{len(feature_services)}] Checking: {item.title}...", end=" ")
+        
+        layers = item.layers
+        has_attachments = False
+        
+        for layer in layers:
+            try:
+                if hasattr(layer.properties, 'hasAttachments'):
+                    if layer.properties.hasAttachments:
+                        has_attachments = True
+                        break
+            except:
+                pass
+        
+        if has_attachments:
+            services_with_attachments.append(item)
+            print("✓ HAS ATTACHMENTS")
+        else:
+            print("(no attachments)")
+            
+    except Exception as e:
+        print(f"✗ Error: {str(e)}")
+        continue
+
+print("\n" + "="*70)
+print(f"Found {len(services_with_attachments)} services with attachments enabled:")
+print("="*70)
+
+for idx, item in enumerate(services_with_attachments, 1):
+    print(f"{idx}. {item.title} (Owner: {item.owner})")
+
+if len(services_with_attachments) == 0:
+    print("\n⚠ No services with attachments found. Exiting.")
+    raise Exception("No attachments found")
+
+# Ask to proceed
+print(f"\n[STEP 4/4] Ready to download attachments from {len(services_with_attachments)} services")
+print("  ⚠ WARNING: This may take a long time and use significant disk space")
+proceed = input("\nProceed with attachment backup? (yes/no): ")
+
+if proceed.lower() != 'yes':
+    print("\nBackup cancelled.")
+    raise Exception("Cancelled by user")
+
+# Backup function
+def backup_attachments(item_list, backup_location):
+    total_attachments = 0
+    total_size = 0
+    failed_count = 0
+    services_processed = 0
+    
+    log_file = os.path.join(backup_location, f"attachment_backup_log_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    
+    print("\n" + "="*70)
+    print("STARTING ATTACHMENT DOWNLOAD")
+    print("="*70)
+    
+    start_time = time.time()
+    
+    with open(log_file, 'w') as log:
+        log.write("="*70 + "\n")
+        log.write("ATTACHMENT BACKUP LOG\n")
+        log.write("="*70 + "\n")
+        log.write(f"Started: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"Services with attachments: {len(item_list)}\n")
+        log.write(f"Backup location: {backup_location}\n")
+        log.write("="*70 + "\n\n")
+        
+        for svc_idx, item in enumerate(item_list, 1):
+            try:
+                print(f"\n[{svc_idx}/{len(item_list)}] Processing: {item.title}")
+                log.write(f"\n[{svc_idx}/{len(item_list)}] {item.title}\n")
+                log.write(f"  Item ID: {item.id}\n")
+                log.write(f"  Owner: {item.owner}\n")
+                
+                # Create service folder
+                service_folder = os.path.join(backup_location, f"{item.title.replace('/', '_')}_{item.id[:8]}")
+                if not os.path.exists(service_folder):
+                    os.makedirs(service_folder)
+                
+                layers = item.layers
+                service_attachment_count = 0
+                
+                for layer in layers:
+                    try:
+                        if not hasattr(layer.properties, 'hasAttachments'):
+                            continue
+                        if not layer.properties.hasAttachments:
+                            continue
+                        
+                        print(f"  Layer: {layer.properties.name}")
+                        log.write(f"  Layer: {layer.properties.name}\n")
+                        
+                        # Create layer folder
+                        layer_folder = os.path.join(service_folder, layer.properties.name.replace('/', '_'))
+                        if not os.path.exists(layer_folder):
+                            os.makedirs(layer_folder)
+                        
+                        # Query all features
+                        features = layer.query(where="1=1", return_ids_only=False)
+                        oid_field = layer.properties.objectIdField
+                        
+                        layer_attachment_count = 0
+                        
+                        for feat_idx, feature in enumerate(features.features):
+                            try:
+                                oid = feature.attributes[oid_field]
+                                attachments = layer.attachments.get_list(oid)
+                                
+                                if len(attachments) > 0:
+                                    # Create feature folder
+                                    feature_folder = os.path.join(layer_folder, f"OID_{oid}")
+                                    if not os.path.exists(feature_folder):
+                                        os.makedirs(feature_folder)
+                                    
+                                    for attachment in attachments:
+                                        try:
+                                            file_name = attachment['name']
+                                            file_path = os.path.join(feature_folder, file_name)
+                                            
+                                            # Download attachment
+                                            layer.attachments.download(
+                                                oid=oid,
+                                                attachment_id=attachment['id'],
+                                                save_path=file_path
+                                            )
+                                            
+                                            file_size = os.path.getsize(file_path)
+                                            total_size += file_size
+                                            layer_attachment_count += 1
+                                            total_attachments += 1
+                                            
+                                            if layer_attachment_count % 10 == 0:
+                                                print(f"    Downloaded {layer_attachment_count} attachments...", end="\r")
+                                            
+                                        except Exception as e:
+                                            failed_count += 1
+                                            log.write(f"    FAILED: OID {oid}, {file_name}: {str(e)}\n")
+                                            continue
+                                
+                            except Exception as e:
+                                continue
+                        
+                        print(f"    ✓ Downloaded {layer_attachment_count} attachments from {layer.properties.name}")
+                        log.write(f"    Attachments downloaded: {layer_attachment_count}\n")
+                        service_attachment_count += layer_attachment_count
+                        
+                    except Exception as e:
+                        print(f"    ✗ Error processing layer: {str(e)}")
+                        log.write(f"    Error: {str(e)}\n")
+                        continue
+                
+                services_processed += 1
+                print(f"  ✓ Service complete: {service_attachment_count} total attachments")
+                log.write(f"  Total attachments for service: {service_attachment_count}\n")
+                
+            except Exception as e:
+                print(f"  ✗ Failed to process service: {str(e)}")
+                log.write(f"  Service failed: {str(e)}\n")
+                continue
+        
+        total_time = time.time() - start_time
+        
+        log.write("\n" + "="*70 + "\n")
+        log.write("BACKUP SUMMARY\n")
+        log.write("="*70 + "\n")
+        log.write(f"Completed: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log.write(f"Total time: {total_time/60:.1f} minutes\n")
+        log.write(f"Services processed: {services_processed}/{len(item_list)}\n")
+        log.write(f"Total attachments downloaded: {total_attachments}\n")
+        log.write(f"Total size: {total_size/(1024*1024):.2f} MB\n")
+        log.write(f"Failed downloads: {failed_count}\n")
+    
+    print("\n" + "="*70)
+    print("ATTACHMENT BACKUP COMPLETE!")
+    print("="*70)
+    print(f"End Time: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Total Duration: {total_time/60:.1f} minutes")
+    print(f"Services Processed: {services_processed}")
+    print(f"Total Attachments: {total_attachments}")
+    print(f"Total Size: {total_size/(1024*1024):.2f} MB ({total_size/(1024*1024*1024):.2f} GB)")
+    print(f"Failed Downloads: {failed_count}")
+    print(f"\nBackup Location: {backup_location}")
+    print(f"Log File: {log_file}")
+    print("="*70)
+
+# Run backup
+backup_attachments(services_with_attachments, backup_folder)
