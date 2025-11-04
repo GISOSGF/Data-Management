@@ -1,0 +1,592 @@
+/**
+ * LARGE ACCOUNT INVENTORY SCRIPT - FINAL, PRODUCTION-READY VERSION
+ * =================================================
+ * Designed for one-button use. Run repeatedly until the "INVENTORY COMPLETE" 
+ * message appears in the Logger.
+ * * !!! MANDATORY SETUP: You must enable the 'Drive API' and 'Tasks API' 
+ * Advanced Services in the Apps Script Project Settings (under Services).
+ */
+
+// Configuration - adjust these if needed
+var CHUNK_SIZE = 500;
+var SPREADSHEET_NAME = 'Complete Google Account Inventory';
+
+// =========================================================================
+// !!! USER CONTROL FOR RESET: 
+// To ERASE all saved progress (tokens/counts) and start from file 0:
+// 1. Change this variable to TRUE.
+// 2. Run the script once (the log will show "INVENTORY RESET COMPLETE").
+var SHOULD_RESET_INVENTORY = false; 
+// =========================================================================
+
+
+// ============================================================================
+// MAIN FUNCTION - Run this repeatedly until complete
+// ============================================================================
+function createCompleteInventory() {
+  
+  // --- Auto-Reset Logic ---
+  if (SHOULD_RESET_INVENTORY === true) {
+    resetInventoryProgress();
+    // Note: We don't change the variable back to FALSE in code, user must do it manually and save.
+    Logger.log('*** INVENTORY RESET COMPLETE. Please set SHOULD_RESET_INVENTORY = false, save, and run again. ***');
+    return;
+  }
+  // --------------------------
+  
+  var ss = getOrCreateSpreadsheet();
+  Logger.log('Working on spreadsheet: ' + ss.getUrl());
+  
+  var status = getInventoryStatus(ss);
+  
+  if (!status.driveComplete) {
+    Logger.log('Processing Drive files (chunk mode using Drive API)...');
+    inventoryDriveFilesChunked(ss); 
+    return;
+  }
+  
+  if (!status.gmailComplete) {
+    Logger.log('Processing Gmail...');
+    try {
+      inventoryGmail(ss);
+      markComplete(ss, 'gmail');
+    } catch(e) {
+      Logger.log('Gmail error: ' + e);
+    }
+    return;
+  }
+  
+  if (!status.calendarsComplete) {
+    Logger.log('Processing Calendars...');
+    try {
+      inventoryCalendars(ss);
+      markComplete(ss, 'calendars');
+    } catch(e) {
+      Logger.log('Calendar error: ' + e);
+    }
+    return;
+  }
+  
+  if (!status.contactsComplete) {
+    Logger.log('Processing Contacts...');
+    try {
+      inventoryContacts(ss);
+      markComplete(ss, 'contacts');
+    } catch(e) {
+      Logger.log('Contacts error: ' + e);
+    }
+    return;
+  }
+  
+  if (!status.keepComplete) {
+    try {
+      inventoryKeepNotes(ss);
+      markComplete(ss, 'keep');
+    } catch(e) {
+      Logger.log('Keep error: ' + e);
+    }
+    return;
+  }
+  
+  if (!status.tasksComplete) {
+    Logger.log('Processing Tasks...');
+    try {
+      inventoryTasks(ss);
+      markComplete(ss, 'tasks');
+    } catch(e) {
+      Logger.log('Tasks error: ' + e);
+    }
+    return;
+  }
+  
+  if (!status.sitesComplete) {
+    try {
+      inventoryGoogleSites(ss);
+      markComplete(ss, 'sites');
+    } catch(e) {
+      Logger.log('Sites error: ' + e);
+    }
+    return;
+  }
+  
+  createSummary(ss);
+  Logger.log('=== INVENTORY COMPLETE! ===');
+}
+
+// ============================================================================
+// RESET AND UTILITY FUNCTIONS
+// ============================================================================
+function resetInventoryProgress() {
+  PropertiesService.getScriptProperties().deleteProperty('drivePageToken');
+  PropertiesService.getScriptProperties().deleteProperty('driveProcessedCount');
+}
+
+function getOrCreateSpreadsheet() {
+  var files = DriveApp.getFilesByName(SPREADSHEET_NAME);
+  
+  if (files.hasNext()) {
+    var file = files.next();
+    Logger.log('Found existing inventory: ' + file.getUrl());
+    return SpreadsheetApp.openById(file.getId());
+  }
+  
+  var ss = SpreadsheetApp.create(SPREADSHEET_NAME);
+  var summarySheet = ss.getActiveSheet();
+  summarySheet.setName('Status');
+  
+  summarySheet.getRange('A1').setValue('Status Tracking - Do Not Edit');
+  summarySheet.getRange('A2:B2').setValues([['Service', 'Complete']]);
+  
+  Logger.log('Created new inventory: ' + ss.getUrl());
+  return ss;
+}
+
+function getInventoryStatus(ss) {
+  var statusSheet = ss.getSheetByName('Status');
+  
+  var status = {
+    driveComplete: ss.getSheetByName('Drive Files') && checkIfComplete(ss, 'drive'),
+    gmailComplete: checkIfComplete(ss, 'gmail'),
+    calendarsComplete: checkIfComplete(ss, 'calendars'),
+    contactsComplete: checkIfComplete(ss, 'contacts'),
+    keepComplete: checkIfComplete(ss, 'keep'),
+    tasksComplete: checkIfComplete(ss, 'tasks'),
+    sitesComplete: checkIfComplete(ss, 'sites')
+  };
+  
+  return status;
+}
+
+function checkIfComplete(ss, serviceName) {
+  var statusSheet = ss.getSheetByName('Status');
+  if (!statusSheet) return false;
+  
+  var data = statusSheet.getDataRange().getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] == serviceName && data[i][1] == 'COMPLETE') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function markComplete(ss, serviceName) {
+  var statusSheet = ss.getSheetByName('Status');
+  if (!statusSheet) {
+    statusSheet = ss.insertSheet('Status');
+  }
+  
+  statusSheet.appendRow([serviceName, 'COMPLETE', new Date()]);
+  Logger.log(serviceName + ' marked complete');
+}
+
+// ============================================================================
+// CHUNKED DRIVE FILES INVENTORY (FIXED API SYNTAX)
+// ============================================================================
+function inventoryDriveFilesChunked(ss) {
+  var sheet = ss.getSheetByName('Drive Files');
+  
+  if (!sheet) {
+    sheet = ss.insertSheet('Drive Files');
+    var headers = ['File Name', 'Type', 'MIME Type', 'URL', 'Owner', 'Date Created', 'Date Modified', 'Size (bytes)', 'Sharing', 'Folder Path', 'File ID'];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+      .setFontWeight('bold')
+      .setBackground('#4285f4')
+      .setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
+  }
+  
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var pageToken = scriptProperties.getProperty('drivePageToken');
+  var processedCount = parseInt(scriptProperties.getProperty('driveProcessedCount') || '0');
+  
+  Logger.log('Starting from file count: ' + processedCount + ' (Page Token: ' + (pageToken || 'Initial Run') + ')');
+  
+  var optionalArgs = {
+    // Correct V2 API field selection syntax is used here
+    fields: 'nextPageToken, items(id, title, mimeType, alternateLink, owners(emailAddress), createdDate, modifiedDate, fileSize, shared, parents(id))',
+    maxResults: CHUNK_SIZE,
+    pageToken: pageToken
+  };
+  
+  var response;
+  try {
+    response = Drive.Files.list(optionalArgs);
+  } catch (e) {
+    Logger.log('Drive API call failed. Check if Drive API Advanced Service is enabled: ' + e);
+    return;
+  }
+
+  var files = response.items;
+  var data = [];
+  var totalProcessed = 0;
+  
+  if (!files) {
+    Logger.log('No files found or API returned an empty list. Drive is likely complete.');
+    files = [];
+  }
+  
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    totalProcessed++;
+    
+    var ownerEmail = file.owners && file.owners.length > 0 && file.owners[0].emailAddress ? file.owners[0].emailAddress : 'Unknown';
+    
+    var folderPath = 'Root';
+    if (file.parents && file.parents.length > 0) {
+      try {
+         var folderId = file.parents[0].id;
+         var folder = DriveApp.getFolderById(folderId);
+         folderPath = getFolderPath(folder);
+      } catch (e) {
+        folderPath = 'Folder ID error: ' + file.parents[0].id; 
+      }
+    }
+    
+    data.push([
+      file.title,
+      getFileType(file.mimeType),
+      file.mimeType,
+      file.alternateLink,
+      ownerEmail,
+      new Date(file.createdDate),
+      new Date(file.modifiedDate),
+      file.fileSize || 0,
+      file.shared ? 'Shared' : 'Private',
+      folderPath,
+      file.id
+    ]);
+    
+    if (data.length >= 50) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, data.length, 11).setValues(data);
+      data = [];
+    }
+  }
+  
+  if (data.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, data.length, 11).setValues(data);
+  }
+  
+  var newTotal = processedCount + totalProcessed;
+  scriptProperties.setProperty('driveProcessedCount', newTotal.toString());
+  
+  var newPageToken = response.nextPageToken;
+  
+  if (!newPageToken) {
+    Logger.log('Drive complete! Total files: ' + newTotal);
+    markComplete(ss, 'drive');
+    scriptProperties.deleteProperty('drivePageToken');
+    scriptProperties.deleteProperty('driveProcessedCount');
+    sheet.autoResizeColumns(1, 11);
+  } else {
+    scriptProperties.setProperty('drivePageToken', newPageToken);
+    Logger.log('Processed ' + totalProcessed + ' files this run. Total so far: ' + newTotal);
+    Logger.log('New page token saved. *** RUN THE SCRIPT AGAIN to continue ***');
+  }
+}
+
+// ============================================================================
+// GMAIL INVENTORY
+// ============================================================================
+function inventoryGmail(ss) {
+  var sheet = ss.getSheetByName('Gmail');
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+  
+  sheet = ss.insertSheet('Gmail');
+  var headers = ['Label Name', 'Total Threads', 'Unread Threads', 'Type'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#ea4335')
+    .setFontColor('#ffffff');
+  
+  var data = [];
+  data.push(['INBOX', GmailApp.getInboxThreads().length, GmailApp.getInboxUnreadCount(), 'System']);
+  data.push(['SENT', GmailApp.getSentThreads().length, 0, 'System']);
+  data.push(['DRAFTS', GmailApp.getDraftMessages().length, 0, 'System']);
+  data.push(['SPAM', GmailApp.getSpamThreads().length, GmailApp.getSpamUnreadCount(), 'System']);
+  data.push(['TRASH', GmailApp.getTrashThreads().length, 0, 'System']);
+  
+  var labels = GmailApp.getUserLabels();
+  for (var i = 0; i < labels.length; i++) {
+    var label = labels[i];
+    data.push([label.getName(), label.getThreads().length, label.getUnreadCount(), 'User Label']);
+  }
+  
+  sheet.getRange(2, 1, data.length, headers.length).setValues(data);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('Gmail: ' + labels.length + ' labels');
+}
+
+// ============================================================================
+// CALENDAR INVENTORY
+// ============================================================================
+function inventoryCalendars(ss) {
+  var sheet = ss.getSheetByName('Calendars');
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+  
+  sheet = ss.insertSheet('Calendars');
+  var headers = ['Calendar Name', 'Description', 'Time Zone', 'Color', 'Owner', 'Access Role', 'Events (Next 30 Days)', 'Calendar ID'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#fbbc04')
+    .setFontColor('#000000');
+  
+  var calendars = CalendarApp.getAllCalendars();
+  var data = [];
+  var now = new Date();
+  var future = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
+  
+  for (var i = 0; i < calendars.length; i++) {
+    var cal = calendars[i];
+    var events = [];
+    try {
+      events = cal.getEvents(now, future);
+    } catch (e) {
+      Logger.log('Could not retrieve events for calendar: ' + cal.getName());
+    }
+
+    data.push([
+      cal.getName(),
+      cal.getDescription(),
+      cal.getTimeZone(),
+      cal.getColor(),
+      cal.isOwnedByMe() ? Session.getActiveUser().getEmail() : 'Shared',
+      cal.isOwnedByMe() ? 'Owner' : cal.getAccess().toString(), 
+      events.length,
+      cal.getId()
+    ]);
+  }
+  
+  sheet.getRange(2, 1, data.length, headers.length).setValues(data);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('Calendars: ' + calendars.length);
+}
+
+// ============================================================================
+// CONTACTS INVENTORY
+// ============================================================================
+function inventoryContacts(ss) {
+  var sheet = ss.getSheetByName('Contacts');
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+  
+  sheet = ss.insertSheet('Contacts');
+  var headers = ['Full Name', 'Email Addresses', 'Phone Numbers', 'Company', 'Job Title', 'Notes', 'Groups'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#34a853')
+    .setFontColor('#ffffff');
+  
+  var contacts = ContactsApp.getContacts();
+  var data = [];
+  
+  for (var i = 0; i < contacts.length; i++) {
+    var contact = contacts[i];
+    var emails = contact.getEmails().map(function(e) { return e.getAddress(); }).join(', ');
+    var phones = contact.getPhones().map(function(p) { return p.getPhoneNumber(); }).join(', ');
+    var groups = contact.getContactGroups().map(function(g) { return g.getName(); }).join(', ');
+    
+    var companyDetails = contact.getCompanies().length > 0 ? contact.getCompanies()[0] : null;
+    
+    data.push([
+      contact.getFullName() || contact.getGivenName() || contact.getFamilyName() || '(No Name)',
+      emails,
+      phones,
+      companyDetails ? companyDetails.getCompanyName() : '',
+      companyDetails ? companyDetails.getJobTitle() : '',
+      contact.getNotes(),
+      groups
+    ]);
+  }
+  
+  if (data.length > 0) {
+    sheet.getRange(2, 1, data.length, headers.length).setValues(data);
+  }
+  
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+  Logger.log('Contacts: ' + contacts.length);
+}
+
+// ============================================================================
+// KEEP, TASKS, SITES
+// ============================================================================
+function inventoryKeepNotes(ss) {
+  var sheet = ss.getSheetByName('Keep Notes (Limited)');
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+  
+  sheet = ss.insertSheet('Keep Notes (Limited)');
+  var headers = ['Note', 'Details'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#f4b400')
+    .setFontColor('#000000');
+  
+  var data = [
+    ['Status', 'Google Keep does not have a direct Apps Script API'],
+    ['Alternative', 'Use Google Takeout to export Keep notes'],
+    ['URL', 'https://takeout.google.com']
+  ];
+  
+  sheet.getRange(2, 1, data.length, headers.length).setValues(data);
+  sheet.autoResizeColumns(1, headers.length);
+}
+
+function inventoryTasks(ss) {
+  var sheet = ss.getSheetByName('Tasks');
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+  
+  sheet = ss.insertSheet('Tasks');
+  var headers = ['Task List Name', 'Task Title', 'Status', 'Due Date', 'Notes', 'Task ID'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#1a73e8')
+    .setFontColor('#ffffff');
+  
+  try {
+    var taskLists = Tasks.Tasklists.list().items;
+    if (!taskLists || taskLists.length === 0) {
+      sheet.getRange(2, 1).setValue('No task lists found');
+      return;
+    }
+    
+    var data = [];
+    for (var i = 0; i < taskLists.length; i++) {
+      var taskList = taskLists[i];
+      var tasks = Tasks.Tasks.list(taskList.id).items; 
+      
+      if (tasks) {
+        for (var j = 0; j < tasks.length; j++) {
+          var task = tasks[j];
+          data.push([
+            taskList.title,
+            task.title,
+            task.status,
+            task.due ? new Date(task.due) : '',
+            task.notes || '',
+            task.id
+          ]);
+        }
+      }
+    }
+    
+    if (data.length > 0) {
+      sheet.getRange(2, 1, data.length, headers.length).setValues(data);
+      Logger.log('Tasks: ' + data.length);
+    } else {
+      sheet.getRange(2, 1).setValue('No tasks found');
+      Logger.log('Tasks: 0');
+    }
+    
+  } catch(e) {
+    sheet.getRange(2, 1, 1, 2).setValues([['Tasks API Not Enabled', 'Enable in Project Settings -> Services']]);
+    Logger.log('Tasks error: ' + e);
+  }
+  
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+}
+
+function inventoryGoogleSites(ss) {
+  var sheet = ss.getSheetByName('Google Sites (Limited)');
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+  
+  sheet = ss.insertSheet('Google Sites (Limited)');
+  var headers = ['Note', 'Details'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#9e9e9e')
+    .setFontColor('#ffffff');
+  
+  var data = [
+    ['Status', 'Google Sites API has limited Apps Script access'],
+    ['Sites in Drive', 'Sites show as files with MIME type: application/vnd.google-apps.site'],
+    ['Check', 'See "Drive Files" tab and filter by Type = "Google Site"']
+  ];
+  
+  sheet.getRange(2, 1, data.length, headers.length).setValues(data);
+  sheet.autoResizeColumns(1, headers.length);
+}
+
+function createSummary(ss) {
+  var summary = ss.getSheetByName('Summary');
+  if (summary) {
+    ss.deleteSheet(summary);
+  }
+  
+  summary = ss.insertSheet('Summary', 0);
+  
+  var headers = ['Service', 'Count', 'Sheet'];
+  summary.getRange(1, 1, 1, 3).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#000000')
+    .setFontColor('#ffffff');
+  
+  var driveSheet = ss.getSheetByName('Drive Files');
+  var gmailSheet = ss.getSheetByName('Gmail');
+  var calSheet = ss.getSheetByName('Calendars');
+  var contactSheet = ss.getSheetByName('Contacts');
+  var taskSheet = ss.getSheetByName('Tasks');
+  
+  var data = [
+    ['Drive Files', driveSheet ? driveSheet.getLastRow() - 1 : 0, 'Drive Files'],
+    ['Gmail Labels', gmailSheet ? gmailSheet.getLastRow() - 1 : 0, 'Gmail'],
+    ['Calendars', calSheet ? calSheet.getLastRow() - 1 : 0, 'Calendars'],
+    ['Contacts', contactSheet ? contactSheet.getLastRow() - 1 : 0, 'Contacts'],
+    ['Tasks', taskSheet ? taskSheet.getLastRow() - 1 : 0, 'Tasks'],
+    ['', '', ''],
+    ['Generated', new Date(), ''],
+    ['Account', Session.getActiveUser().getEmail(), '']
+  ];
+  
+  summary.getRange(2, 1, data.length, 3).setValues(data);
+  summary.autoResizeColumns(1, 3);
+  summary.setColumnWidth(2, 150);
+  ss.setActiveSheet(summary);
+}
+
+function getFileType(mimeType) {
+  var types = {
+    'application/vnd.google-apps.document': 'Google Doc',
+    'application/vnd.google-apps.spreadsheet': 'Google Sheet',
+    'application/vnd.google-apps.presentation': 'Google Slides',
+    'application/vnd.google-apps.form': 'Google Form',
+    'application/vnd.google-apps.drawing': 'Google Drawing',
+    'application/vnd.google-apps.folder': 'Folder',
+    'application/vnd.google-apps.map': 'Google My Maps',
+    'application/vnd.google-apps.site': 'Google Site',
+    'application/pdf': 'PDF',
+    'image/jpeg': 'JPEG Image',
+    'image/png': 'PNG Image',
+    'text/plain': 'Text File',
+    'application/zip': 'ZIP Archive',
+    'text/csv': 'CSV File'
+  };
+  return types[mimeType] || 'Other (' + mimeType.split('/').pop() + ')';
+}
+
+function getFolderPath(folder) {
+  var path = folder.getName();
+  var parents = folder.getParents();
+  var depth = 0;
+  while (parents.hasNext() && depth < 15) { 
+    var parent = parents.next();
+    path = parent.getName() + ' / ' + path;
+    parents = parent.getParents();
+    depth++;
+  }
+  return path;
+}
