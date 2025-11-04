@@ -1,0 +1,181 @@
+/**
+ * DRIVE MIGRATION INVENTORY - OWNED FILES ONLY
+ * =================================================
+ * This script inventories only the Drive files owned by the user running the script.
+ * * !!! MANDATORY SETUP: You must enable the 'Drive API' Advanced Service 
+ * in the Apps Script Project Settings (under Services).
+ */
+
+// Configuration
+var SPREADSHEET_NAME = 'My Owned Drive Files Inventory';
+var CHUNK_SIZE = 500; // Files to process per 10-minute run
+
+// ============================================================================
+// MAIN FUNCTION - Run this repeatedly until complete
+// ============================================================================
+function inventoryOwnedDrive() {
+  var ss = getOrCreateSpreadsheet();
+  Logger.log('Working on spreadsheet: ' + ss.getUrl());
+  
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var pageToken = scriptProperties.getProperty('drivePageToken');
+  var processedCount = parseInt(scriptProperties.getProperty('driveProcessedCount') || '0');
+  
+  // 1. Log Start Status
+  Logger.log('Starting from file count: ' + processedCount + ' (Page Token: ' + (pageToken || 'Initial Run') + ')');
+  
+  // 2. Drive API Query - CRITICAL FILTER: "me" in owners
+  var optionalArgs = {
+    q: '"me" in owners and trashed = false', // Only files I own, and not in the trash
+    fields: 'nextPageToken, items(id, title, mimeType, alternateLink, owners(emailAddress), createdDate, modifiedDate, fileSize, shared, parents(id))',
+    maxResults: CHUNK_SIZE,
+    pageToken: pageToken
+  };
+  
+  var response;
+  try {
+    response = Drive.Files.list(optionalArgs);
+  } catch (e) {
+    Logger.log('ERROR: Drive API call failed. Check if Drive API Advanced Service is enabled: ' + e);
+    return;
+  }
+
+  var files = response.items;
+  var data = [];
+  var totalProcessed = 0;
+  var sheet = setupDriveSheet(ss);
+  
+  if (!files || files.length === 0) {
+    if (!response.nextPageToken) {
+        Logger.log('Drive inventory complete! Total files owned: ' + processedCount);
+        resetProgress();
+        sheet.autoResizeColumns(1, 11);
+    } else {
+        // Should not happen, but handles an empty page mid-inventory
+        scriptProperties.setProperty('drivePageToken', response.nextPageToken);
+        Logger.log('Processed 0 files this run. *** RUN THE SCRIPT AGAIN ***');
+    }
+    return;
+  }
+  
+  // 3. Process Files
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    totalProcessed++;
+    
+    var ownerEmail = file.owners && file.owners.length > 0 && file.owners[0].emailAddress ? file.owners[0].emailAddress : 'Unknown';
+    var folderPath = getFolderPath(file);
+    
+    data.push([
+      file.title,
+      getFileType(file.mimeType),
+      file.mimeType,
+      file.alternateLink,
+      ownerEmail,
+      new Date(file.createdDate),
+      new Date(file.modifiedDate),
+      file.fileSize || 0,
+      file.shared ? 'Shared' : 'Private',
+      folderPath,
+      file.id
+    ]);
+  }
+  
+  // 4. Write Data and Save Progress
+  if (data.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, data.length, 11).setValues(data);
+  }
+  
+  var newTotal = processedCount + totalProcessed;
+  scriptProperties.setProperty('driveProcessedCount', newTotal.toString());
+  
+  var newPageToken = response.nextPageToken;
+  
+  if (!newPageToken) {
+    Logger.log('Drive inventory complete! Total files owned: ' + newTotal);
+    resetProgress();
+    sheet.autoResizeColumns(1, 11);
+  } else {
+    scriptProperties.setProperty('drivePageToken', newPageToken);
+    Logger.log('Processed ' + totalProcessed + ' files this run. Total so far: ' + newTotal);
+    Logger.log('New page token saved. *** RUN THE SCRIPT AGAIN to continue ***');
+  }
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+function getOrCreateSpreadsheet() {
+  var files = DriveApp.getFilesByName(SPREADSHEET_NAME);
+  
+  if (files.hasNext()) {
+    var file = files.next();
+    Logger.log('Found existing inventory: ' + file.getUrl());
+    return SpreadsheetApp.openById(file.getId());
+  }
+  
+  var ss = SpreadsheetApp.create(SPREADSHEET_NAME);
+  Logger.log('Created new inventory: ' + ss.getUrl());
+  return ss;
+}
+
+function setupDriveSheet(ss) {
+  var sheet = ss.getSheetByName('Owned Drive Files');
+  
+  if (!sheet) {
+    sheet = ss.insertSheet('Owned Drive Files');
+    var headers = ['File Name', 'Type', 'MIME Type', 'URL', 'Owner', 'Date Created', 'Date Modified', 'Size (bytes)', 'Sharing', 'Folder Path', 'File ID'];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+      .setFontWeight('bold')
+      .setBackground('#1a73e8') // Google Blue
+      .setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function getFolderPath(file) {
+    if (!file.parents || file.parents.length === 0) return 'Root';
+    
+    try {
+        // Use DriveApp to get the actual folder object for the path lookup
+        var folderId = file.parents[0].id;
+        var folder = DriveApp.getFolderById(folderId);
+        
+        var path = folder.getName();
+        var parents = folder.getParents();
+        var depth = 0;
+        
+        while (parents.hasNext() && depth < 15) { 
+            var parent = parents.next();
+            path = parent.getName() + ' / ' + path;
+            parents = parent.getParents();
+            depth++;
+        }
+        return path;
+    } catch (e) {
+        // This usually happens for files whose parent folder was deleted
+        return 'Unknown/Orphaned Folder'; 
+    }
+}
+
+function getFileType(mimeType) {
+  var types = {
+    'application/vnd.google-apps.document': 'Google Doc',
+    'application/vnd.google-apps.spreadsheet': 'Google Sheet',
+    'application/vnd.google-apps.presentation': 'Google Slides',
+    'application/vnd.google-apps.form': 'Google Form',
+    'application/vnd.google-apps.drawing': 'Google Drawing',
+    'application/vnd.google-apps.folder': 'Folder',
+    'application/vnd.google-apps.site': 'Google Site',
+    'application/pdf': 'PDF',
+    // ... add more common types if needed
+  };
+  return types[mimeType] || 'Other (' + mimeType.split('/').pop() + ')';
+}
+
+function resetProgress() {
+  PropertiesService.getScriptProperties().deleteProperty('drivePageToken');
+  PropertiesService.getScriptProperties().deleteProperty('driveProcessedCount');
+}
